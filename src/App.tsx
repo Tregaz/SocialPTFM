@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, LogOut, MapPin } from "lucide-react";
 import { startBotSimulator } from "@/utils/botSimulator";
+import { startIntelligentBots } from "@/utils/intelligentBots";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BottomNav, type Tab } from "@/components/pulse/BottomNav";
 import { RadarView, type PulseEvent } from "@/components/pulse/RadarView";
@@ -223,6 +224,14 @@ function PulseApp() {
 }
 
 function App() {
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      console.log("[App] Initializing Intelligent Bots...");
+      const stop = startIntelligentBots();
+      return stop;
+    }
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <PulseApp />
