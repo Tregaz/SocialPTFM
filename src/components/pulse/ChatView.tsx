@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Brain, Coins, Send, TrendingUp, Users, Wifi } from "lucide-react";
+import { AlertTriangle, Brain, Coins, Send, TrendingUp, Users, Wifi } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useWebRTC, type P2PMessage } from "@/hooks/useWebRTC";
 
@@ -12,7 +12,7 @@ interface Msg {
   created_at?: string;
 }
 
-const HOT_WORDS = ["gol", "drop", "brutal", "temazo", "golazo", "bass"];
+const HOT_WORDS = ["gol", "drop", "brutal", "temazo", "golazo", "bass", "🔴", "collapse", "colapso", "urgente", "filling"];
 
 interface Poll {
   id: string;
@@ -62,7 +62,20 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
   const [activity, setActivity] = useState(0);
   const [nodos, setNodos] = useState(0);
   const endRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const isDemoEvent = eventId.startsWith("demo-");
+
+  const QUICK_TAGS = [
+    { label: "🟢 Fluid", value: "🟢 Fluid" },
+    { label: "🟡 Filling", value: "🟡 Filling" },
+    { label: "🔴 Collapse", value: "🔴 Collapse" },
+    { label: "🍻 Bar", value: "🍻 Bar" },
+  ];
+
+  const handleTagClick = (tag: string) => {
+    setInput((prev) => (prev ? `${prev} ${tag}` : tag));
+    inputRef.current?.focus();
+  };
 
   const triggerHype = () => {
     setShake(true);
@@ -312,23 +325,39 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
         </div>
       </section>
 
-      <section className="px-4 pt-4 space-y-2">
+      <section className="px-4 pt-4 space-y-3">
         {msgs.map((m) => (
           <div key={m.id} className={`flex ${m.mine ? "justify-end" : "justify-start"}`}>
             <div
-              className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm animate-slide-up ${
+              className={`relative max-w-[85%] px-4 py-2 text-sm shadow-sm transition-all animate-slide-up ${
                 m.mine
-                  ? "bg-[var(--neon)] text-background"
+                  ? "bg-emerald-600 text-white rounded-2xl rounded-tr-none"
                   : m.hot
-                  ? "neon-border bg-surface"
-                  : "bg-surface border border-border"
+                  ? "bg-red-500/20 border border-red-500/50 text-white rounded-2xl rounded-tl-none"
+                  : "bg-zinc-700 text-white rounded-2xl rounded-tl-none"
               }`}
             >
               {!m.mine && (
-                <p className="mb-0.5 text-[10px] font-bold text-muted-foreground">{m.user}</p>
+                <p className="mb-1 text-[10px] font-bold text-zinc-400">
+                  {m.user}
+                </p>
               )}
-              <p className="leading-snug">{m.text}</p>
-              {m.hot && <p className="mt-1 text-[10px] neon-text">🔥 Termómetro al máximo</p>}
+              <div className="flex items-start gap-2">
+                <p className="leading-relaxed">{m.text}</p>
+                {m.hot && (
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />
+                )}
+              </div>
+              {m.hot && (
+                <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-red-400">
+                  Aviso Crítico
+                </p>
+              )}
+              {m.created_at && (
+                <p className={`mt-1 text-right text-[9px] ${m.mine ? "text-emerald-200" : "text-zinc-400"}`}>
+                  {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              )}
             </div>
           </div>
         ))}
@@ -348,17 +377,29 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       </div>
 
       <div className="fixed bottom-16 left-0 right-0 z-30 glass border-t border-border px-3 py-2">
+        <div className="mb-2 flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+          {QUICK_TAGS.map((tag) => (
+            <button
+              key={tag.value}
+              onClick={() => handleTagClick(tag.value)}
+              className="whitespace-nowrap rounded-full bg-surface-2 px-3 py-1 text-xs font-medium hover:bg-surface-3 transition-colors"
+            >
+              {tag.label}
+            </button>
+          ))}
+        </div>
         <div className="flex items-center gap-2">
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && send()}
             placeholder="Escribe al megáfono…"
-            className="flex-1 rounded-full bg-surface-2 px-4 py-3 text-sm outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-[var(--neon)]"
+            className="flex-1 rounded-full bg-surface-2 px-4 py-3 text-sm outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-emerald-500/50"
           />
           <button
             onClick={send}
-            className="grid h-12 w-12 place-items-center rounded-full bg-[var(--neon)] text-background active:scale-95"
+            className="grid h-12 w-12 place-items-center rounded-full bg-emerald-600 text-white active:scale-95 shadow-lg"
             aria-label="Enviar"
           >
             <Send className="h-5 w-5" />

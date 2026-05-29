@@ -29,6 +29,13 @@ function PulseApp() {
 
   const { nearbyEvents, activeEvent, status: geoStatus, position } = useGeofence();
 
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      const stop = startIntelligentBots();
+      return stop;
+    }
+  }, []);
+
   // ── Auto-activate Modo Evento when GPS puts user inside an event radius ───
   useEffect(() => {
     if (!activeEvent) return;
@@ -224,14 +231,6 @@ function PulseApp() {
 }
 
 function App() {
-  useEffect(() => {
-    if (import.meta.env.DEV) {
-      console.log("[App] Initializing Intelligent Bots...");
-      const stop = startIntelligentBots();
-      return stop;
-    }
-  }, []);
-
   return (
     <QueryClientProvider client={queryClient}>
       <PulseApp />

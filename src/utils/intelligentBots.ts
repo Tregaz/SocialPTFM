@@ -76,7 +76,7 @@ const NEWS_TEMPLATES = [
   "¿Alguien ha visto a un grupo con banderas amarillas? ¡Los buscamos!",
 ];
 
-const HOT_KEYWORDS = ['colapso', 'retraso', 'completo', 'cerrado', 'urgente'];
+const HOT_KEYWORDS = ['colapso', 'retraso', 'completo', 'cerrado', 'urgente', '🔴', 'colapso', 'urgente', 'collapse'];
 const BOT_USER_ID = "00000000-0000-0000-0000-000000000000";
 const BOT_NAME = "Pulse News Bot";
 
@@ -150,13 +150,13 @@ export function startIntelligentBots() {
     if (!isRunning) return;
     await generateLiveNews();
     
-    // Periodically generate news every 30-60 seconds
-    const nextInterval = 30000 + Math.random() * 30000;
+    // Periodically generate news every 20-30 seconds
+    const nextInterval = 20000 + Math.random() * 10000;
     timeoutId = setTimeout(loop, nextInterval);
   };
 
   // Start the loop after a short delay to allow seeding to settle
-  timeoutId = setTimeout(loop, 10000);
+  timeoutId = setTimeout(loop, 5000);
 
   return () => {
     isRunning = false;
