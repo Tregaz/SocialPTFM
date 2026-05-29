@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Megaphone, Send, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/useAuth";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 const QUICK_ALERTS = [
   "⚠️ Desvío obligatorio por masificación en Pista",
@@ -21,25 +21,34 @@ export function AdminView({ eventId, zone }: Props) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [lastSent, setLastSent] = useState<string | null>(null);
-  const { user } = useAuth();
+  const channelRef = useRef<RealtimeChannel | null>(null);
   const isDemo = !eventId || eventId.startsWith("demo-");
 
-  const emit = async (message: string) => {
-    if (!message.trim() || sending || isDemo) return;
+  useEffect(() => {
+    if (isDemo) return;
+    const ch = supabase.channel(`pulse-sim-${eventId}`);
+    ch.subscribe();
+    channelRef.current = ch;
+    return () => {
+      supabase.removeChannel(ch);
+      channelRef.current = null;
+    };
+  }, [eventId, isDemo]);
+
+  const emit = (message: string) => {
+    if (!message.trim() || sending || isDemo || !channelRef.current) return;
     setSending(true);
 
-    const { error } = await (supabase.from("mensajes") as ReturnType<typeof supabase.from> & { insert: (data: Record<string, unknown>) => Promise<{ error: Error | null }> }).insert({
-      evento_id: eventId,
-      zona_recinto: zone,
-      usuario_id: user?.id ?? "system",
-      usuario_nombre: "SISTEMA / CONTROL",
-      texto: message.trim(),
-      hot: true,
+    channelRef.current.send({
+      type: "broadcast",
+      event: "hot_alert",
+      payload: {
+        id: crypto.randomUUID(),
+        texto: message.trim(),
+        usuario_nombre: "SISTEMA / CONTROL",
+        zona_recinto: zone,
+      },
     });
-
-    if (error) {
-      console.error("Error emitting alert:", error);
-    }
 
     setSending(false);
     setLastSent(message.trim());
@@ -56,7 +65,7 @@ export function AdminView({ eventId, zone }: Props) {
         <div>
           <p className="text-sm font-bold text-[var(--danger)]">Panel de Control</p>
           <p className="text-[10px] uppercase tracking-widest text-[var(--danger)]/70">
-            Acceso restringido · SISTEMA · escritura en BD
+            Acceso restringido · SISTEMA · sin escritura en BD
           </p>
         </div>
       </div>

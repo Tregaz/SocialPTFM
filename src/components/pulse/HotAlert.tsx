@@ -21,22 +21,17 @@ export function HotAlert({ eventId }: Props) {
     if (!eventId || eventId.startsWith("demo-")) return;
 
     const channel = supabase
-      .channel("hot-alerts-global")
+      .channel(`pulse-sim-${eventId}`)
       .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "mensajes",
-          filter: "hot=eq.true",
-        },
-        (payload: { new: { id: string; texto: string; usuario_nombre: string | null; zona_recinto: string } }) => {
-          const m = payload.new;
+        "broadcast",
+        { event: "hot_alert" },
+        (msg: { payload: { id: string; texto: string; usuario_nombre: string | null; zona_recinto: string } }) => {
+          const p = msg.payload;
           setAlert({
-            id: m.id,
-            texto: m.texto,
-            usuario_nombre: m.usuario_nombre,
-            zona_recinto: m.zona_recinto,
+            id: p.id,
+            texto: p.texto,
+            usuario_nombre: p.usuario_nombre,
+            zona_recinto: p.zona_recinto,
           });
           setVisible(true);
         },
