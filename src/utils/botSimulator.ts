@@ -51,7 +51,7 @@ export function startBotSimulator({ eventId }: BotSimulatorOptions): () => void 
   let stopped = false;
   let channel: RealtimeChannel | null = null;
 
-  const channelName = `pulse-sim-${eventId}`;
+  const channelName = `pulse-event-${eventId}`;
   channel = supabase.channel(channelName);
   channel.subscribe();
 

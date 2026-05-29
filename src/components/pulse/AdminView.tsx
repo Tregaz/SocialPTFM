@@ -26,7 +26,7 @@ export function AdminView({ eventId, zone }: Props) {
 
   useEffect(() => {
     if (isDemo) return;
-    const ch = supabase.channel(`pulse-sim-${eventId}`);
+    const ch = supabase.channel(`pulse-event-${eventId}`);
     ch.subscribe();
     channelRef.current = ch;
     return () => {

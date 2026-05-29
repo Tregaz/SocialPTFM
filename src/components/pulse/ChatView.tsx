@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Brain, Coins, Send, TrendingUp, Users, Wifi } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useWebRTC, type P2PMessage } from "@/hooks/useWebRTC";
+import { useToast } from "@/hooks/use-toast";
+import { cleanText } from "@/utils/filter";
 
 interface Msg {
   id: string;
@@ -13,7 +15,6 @@ interface Msg {
 }
 
 const HOT_WORDS = ["gol", "drop", "brutal", "temazo", "golazo", "bass"];
-const QUICK_TAGS = ["🔥 Brutal", "🙌 ¡Temazo!", "⚽️ ¡GOL!", "🍻 ¡Salud!", "🤩 Increíble"];
 
 interface Poll {
   id: string;
@@ -62,6 +63,8 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
   const [voted, setVoted] = useState<Record<string, number>>({});
   const [activity, setActivity] = useState(0);
   const [nodos, setNodos] = useState(0);
+  const [msgTimestamps, setMsgTimestamps] = useState<number[]>([]);
+  const { toast } = useToast();
   const endRef = useRef<HTMLDivElement>(null);
   const isDemoEvent = eventId.startsWith("demo-");
 
@@ -137,7 +140,7 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
     })();
 
     const channel = supabase
-      .channel(`zona-${eventId}-${zone}`)
+      .channel(`pulse-event-${eventId}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "mensajes" },
@@ -162,10 +165,9 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
         { event: "INSERT", schema: "public", table: "nodos_activos" },
         (payload) => {
           const n = payload.new as { zona_recinto: string; evento_id: string };
-          if (n.evento_id === eventId && n.zona_recinto === zone) {
-            setNodos((c) => c + 1);
-            setActivity((a) => a + 1);
-          }
+          if (n.evento_id !== eventId || n.zona_recinto !== zone) return;
+          setNodos((c) => c + 1);
+          setActivity((a) => a + 1);
         },
       )
       .subscribe();
@@ -180,47 +182,39 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs]);
 
-  const send = async (explicitText?: string) => {
-    const text = explicitText ?? input.trim();
+  const send = async () => {
+    const now = Date.now();
+    const recentMsgs = msgTimestamps.filter((ts) => now - ts < 30000);
+
+    if (recentMsgs.length >= 2) {
+      toast({
+        title: "Límite alcanzado",
+        description: "Máximo 2 mensajes cada 30 segundos.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const text = cleanText(input.trim());
     if (!text) return;
-    const isHot = HOT_WORDS.some((w) => text.toLowerCase().includes(w.toLowerCase()));
-    if (!explicitText) setInput("");
+    const isHot = HOT_WORDS.some((w) => text.toLowerCase().includes(w));
+    setInput("");
+    setMsgTimestamps([...recentMsgs, now]);
 
     const localId = crypto.randomUUID();
-    // Optimistic Update
-    const newMsg: Msg = { 
-      id: localId, 
-      user: usuarioNombre || "@tú", 
-      text, 
-      mine: true, 
-      hot: isHot,
-      created_at: new Date().toISOString()
-    };
-    setMsgs((m) => [...m, newMsg]);
-
-    if (!isDemoEvent) {
-      const { data, error } = await supabase.from("mensajes").insert({
+    if (isDemoEvent) {
+      setMsgs((m) => [...m, { id: localId, user: "@tú", text, mine: true, hot: isHot }]);
+    } else {
+      const { error } = await supabase.from("mensajes").insert({
         evento_id: eventId,
         zona_recinto: zone,
         usuario_id: usuarioId,
         usuario_nombre: usuarioNombre,
         texto: text,
         hot: isHot,
-      }).select().single();
-
-      if (error) {
-        console.error("Mensaje no enviado", error);
-        // Rollback optimistic update if error
-        setMsgs((m) => m.filter(msg => msg.id !== localId));
-        return;
-      }
-
-      if (data) {
-        // Update local message with real DB ID to prevent duplicates from Realtime
-        setMsgs((prev) => prev.map((m) => (m.id === localId ? { ...m, id: data.id } : m)));
-      }
-      
-      broadcast("chat", { id: data?.id || localId, user: usuarioNombre, text, hot: isHot });
+      });
+      if (error) console.error("Mensaje no enviado", error);
+      broadcast("chat", { id: localId, user: usuarioNombre, text, hot: isHot });
       if (isHot) broadcast("hype", { ts: Date.now() });
     }
 
@@ -229,10 +223,6 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       triggerHype();
       setRep((r) => r + 3);
     }
-  };
-
-  const handleTagClick = (tag: string) => {
-    send(tag);
   };
 
   const vote = (pid: string, idx: number) => {
@@ -375,17 +365,6 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       </div>
 
       <div className="fixed bottom-16 left-0 right-0 z-30 glass border-t border-border px-3 py-2">
-        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-          {QUICK_TAGS.map((tag) => (
-            <button
-              key={tag}
-              onClick={() => handleTagClick(tag)}
-              className="whitespace-nowrap rounded-full bg-surface-2 px-3 py-1 text-xs font-medium border border-border hover:border-[var(--neon)] transition-colors"
-            >
-              {tag}
-            </button>
-          ))}
-        </div>
         <div className="flex items-center gap-2">
           <input
             value={input}
