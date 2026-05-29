@@ -1,6 +1,9 @@
 packages:
   - "."
 
+allowBuilds:
+  esbuild: set this to true or false
+
 catalog:
   "@replit/vite-plugin-cartographer": "^0.2.7"
   "@replit/vite-plugin-dev-banner": "^0.1.2"
