@@ -194,7 +194,12 @@ function PulseApp() {
           />
         )}
         {tab === "feed" && selection && (
-          <FeedView zone={selection.zone} eventId={selection.event.id} />
+          <FeedView
+            zone={selection.zone}
+            eventId={selection.event.id}
+            zones={selection.event.zones}
+            onZoneChange={(z) => setSelection({ event: selection.event, zone: z })}
+          />
         )}
         {tab === "chat" && selection && (
           <ChatView

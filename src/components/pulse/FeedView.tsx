@@ -14,6 +14,13 @@ interface FeedItem {
   ago: string;
 }
 
+interface ZoneStats {
+  count: number;
+  hasHot: boolean;
+}
+
+type SemaphoreColor = "green" | "yellow" | "red";
+
 const GRADIENTS = [
   "linear-gradient(135deg,#ff2d87,#7a00ff)",
   "linear-gradient(135deg,#00d27a,#005a8a)",
@@ -58,16 +65,69 @@ function dbRowToItem(row: {
   };
 }
 
+function getSemaphoreColor(stats: ZoneStats): SemaphoreColor {
+  if (stats.hasHot) return "red";
+  if (stats.count > 5) return "yellow";
+  return "green";
+}
+
+function semaphoreDotClass(color: SemaphoreColor): string {
+  const map: Record<SemaphoreColor, string> = {
+    green: "bg-[var(--neon-2)]",
+    yellow: "bg-yellow-400",
+    red: "bg-[var(--danger)]",
+  };
+  return map[color];
+}
+
 interface Props {
   zone: string;
   eventId: string;
+  zones: string[];
+  onZoneChange: (zone: string) => void;
 }
 
-export function FeedView({ zone, eventId }: Props) {
+export function FeedView({ zone, eventId, zones, onZoneChange }: Props) {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [zoneStats, setZoneStats] = useState<Record<string, ZoneStats>>({});
   const isDemo = !eventId || eventId.startsWith("demo-");
 
+  // ── Zone stats initialisation & historical fetch ──────────────────────────
+  useEffect(() => {
+    const initial: Record<string, ZoneStats> = {};
+    for (const z of zones) {
+      initial[z] = { count: 0, hasHot: false };
+    }
+
+    if (isDemo) {
+      setZoneStats(initial);
+      return;
+    }
+
+    const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+
+    (async () => {
+      const { data, error } = await supabase
+        .from("mensajes")
+        .select("zona_recinto, hot")
+        .eq("evento_id", eventId)
+        .gte("created_at", fifteenMinAgo);
+
+      if (!error && data) {
+        for (const row of data) {
+          const z = row.zona_recinto;
+          if (z && initial[z]) {
+            initial[z].count++;
+            if (row.hot) initial[z].hasHot = true;
+          }
+        }
+      }
+      setZoneStats(initial);
+    })();
+  }, [eventId, isDemo, zones]);
+
+  // ── Zone-specific feed fetch & real-time subscriptions ─────────────────────
   useEffect(() => {
     if (isDemo) {
       setItems([]);
@@ -82,6 +142,7 @@ export function FeedView({ zone, eventId }: Props) {
         .from("mensajes")
         .select("*")
         .eq("evento_id", eventId)
+        .eq("zona_recinto", zone)
         .order("created_at", { ascending: false })
         .limit(50);
 
@@ -95,7 +156,8 @@ export function FeedView({ zone, eventId }: Props) {
       }
     })();
 
-    // Real messages from DB (postgres changes)
+    // Real messages from DB (postgres changes) — subscribe to ALL event
+    // messages to power semaphores, but only add matching zone to the feed
     const dbChannel = supabase
       .channel(`feed-db-${eventId}`)
       .on(
@@ -107,8 +169,31 @@ export function FeedView({ zone, eventId }: Props) {
           filter: `evento_id=eq.${eventId}`,
         },
         (payload) => {
-          const newItem = dbRowToItem(payload.new as Parameters<typeof dbRowToItem>[0]);
-          setItems((prev) => [newItem, ...prev]);
+          const newRow = payload.new as Parameters<typeof dbRowToItem>[0];
+          const zona = (payload.new as Record<string, unknown>).zona_recinto as
+            | string
+            | undefined;
+
+          // Always update zone stats regardless of selected zone
+          if (zona) {
+            setZoneStats((prev) => {
+              const current = prev[zona];
+              if (!current) return prev;
+              return {
+                ...prev,
+                [zona]: {
+                  count: current.count + 1,
+                  hasHot: current.hasHot || !!newRow.hot,
+                },
+              };
+            });
+          }
+
+          // Only prepend to feed if zone matches current selection
+          if (zona === zone) {
+            const newItem = dbRowToItem(newRow);
+            setItems((prev) => [newItem, ...prev]);
+          }
         },
       )
       .subscribe();
@@ -119,22 +204,49 @@ export function FeedView({ zone, eventId }: Props) {
       .on(
         "broadcast",
         { event: "bot_message" },
-        (msg: { payload: { id: string; author: string; zone: string; text: string; hot: boolean; ts: string } }) => {
+        (msg: {
+          payload: {
+            id: string;
+            author: string;
+            zone: string;
+            text: string;
+            hot: boolean;
+            ts: string;
+          };
+        }) => {
           const p = msg.payload;
-          setItems((prev) => [
-            {
-              id: p.id,
-              author: `@${p.author}`,
-              peerId: `sim:${p.zone}`,
-              gradient: gradientFor(p.id),
-              caption: p.text,
-              likes: 0,
-              liked: false,
-              reported: false,
-              ago: "ahora",
-            },
-            ...prev,
-          ]);
+          const zona = p.zone;
+
+          // Always update zone stats
+          setZoneStats((prev) => {
+            const current = prev[zona];
+            if (!current) return prev;
+            return {
+              ...prev,
+              [zona]: {
+                count: current.count + 1,
+                hasHot: current.hasHot || p.hot,
+              },
+            };
+          });
+
+          // Only prepend to feed if zone matches current selection
+          if (zona === zone) {
+            setItems((prev) => [
+              {
+                id: p.id,
+                author: `@${p.author}`,
+                peerId: `sim:${zona}`,
+                gradient: gradientFor(p.id),
+                caption: p.text,
+                likes: 0,
+                liked: false,
+                reported: false,
+                ago: "ahora",
+              },
+              ...prev,
+            ]);
+          }
         },
       )
       .subscribe();
@@ -144,7 +256,7 @@ export function FeedView({ zone, eventId }: Props) {
       supabase.removeChannel(dbChannel);
       supabase.removeChannel(simChannel);
     };
-  }, [eventId, isDemo]);
+  }, [eventId, isDemo, zone]);
 
   const toggleLike = (id: string) =>
     setItems((xs) =>
@@ -179,9 +291,39 @@ export function FeedView({ zone, eventId }: Props) {
 
   return (
     <div className="relative pb-32">
+      {/* ── Scrollable zone tab bar with saturation semaphores ─────────── */}
+      <div className="overflow-x-auto scrollbar-hide px-4 pt-2 pb-1">
+        <div className="flex gap-2">
+          {zones.map((z) => {
+            const active = z === zone;
+            const stats = zoneStats[z] ?? { count: 0, hasHot: false };
+            const color = getSemaphoreColor(stats);
+            return (
+              <button
+                key={z}
+                onClick={() => onZoneChange(z)}
+                className={`flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                  active
+                    ? "neon-chip"
+                    : "border border-border bg-surface-2 text-muted-foreground"
+                }`}
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${semaphoreDotClass(color)}`}
+                />
+                {z}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Header ────────────────────────────────────────────────────── */}
       <div className="px-4 pt-2 pb-3 flex items-center justify-between">
         <div>
-          <p className="text-xs uppercase tracking-widest text-muted-foreground">Feed efímero · {zone}</p>
+          <p className="text-xs uppercase tracking-widest text-muted-foreground">
+            Feed efímero
+          </p>
           <h2 className="text-xl font-bold">P2P en vivo</h2>
         </div>
         <div className="flex items-center gap-1 rounded-full neon-chip px-3 py-1 text-[10px] font-semibold">
@@ -197,7 +339,7 @@ export function FeedView({ zone, eventId }: Props) {
 
       {!loading && items.length === 0 && (
         <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-          Aún no hay mensajes en este evento. ¡Sé el primero!
+          Aún no hay mensajes en esta zona. ¡Sé el primero!
         </div>
       )}
 
