@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, LogOut, MapPin } from "lucide-react";
 import { startBotSimulator } from "@/utils/botSimulator";
+import { startIntelligentBots } from "@/utils/intelligentBots";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BottomNav, type Tab } from "@/components/pulse/BottomNav";
 import { RadarView, type PulseEvent } from "@/components/pulse/RadarView";
@@ -27,6 +28,12 @@ function PulseApp() {
   const logoTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { nearbyEvents, activeEvent, status: geoStatus, position } = useGeofence();
+
+  // ── Background maintenance bots (Purge & News) ───────────────────────────
+  useEffect(() => {
+    const stop = startIntelligentBots();
+    return stop;
+  }, []);
 
   // ── Auto-activate Modo Evento when GPS puts user inside an event radius ───
   useEffect(() => {

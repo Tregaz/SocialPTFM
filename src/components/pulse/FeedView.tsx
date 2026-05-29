@@ -82,6 +82,7 @@ export function FeedView({ zone, eventId }: Props) {
         .from("mensajes")
         .select("*")
         .eq("evento_id", eventId)
+        .eq("zona_recinto", zone)
         .order("created_at", { ascending: false })
         .limit(50);
 
@@ -96,27 +97,34 @@ export function FeedView({ zone, eventId }: Props) {
     })();
 
     // Real messages from DB (postgres changes)
-    const channel = supabase
-      .channel(`pulse-event-${eventId}`)
+    const dbChannel = supabase
+      .channel(`pulse-event-${eventId}-feed-db`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "mensajes",
+          filter: `evento_id=eq.${eventId}`,
         },
         (payload) => {
-          const m = payload.new as { evento_id: string };
-          if (m.evento_id !== eventId) return;
+          const m = payload.new as { zona_recinto: string };
+          if (m.zona_recinto !== zone) return;
           const newItem = dbRowToItem(payload.new as Parameters<typeof dbRowToItem>[0]);
           setItems((prev) => [newItem, ...prev]);
         },
       )
+      .subscribe();
+
+    // Ephemeral bot messages via Broadcast (no DB write)
+    const simChannel = supabase
+      .channel(`pulse-event-${eventId}-feed-sim`)
       .on(
         "broadcast",
         { event: "bot_message" },
         (msg: { payload: { id: string; author: string; zone: string; text: string; hot: boolean; ts: string } }) => {
           const p = msg.payload;
+          if (p.zone !== zone) return;
           setItems((prev) => [
             {
               id: p.id,
@@ -137,7 +145,8 @@ export function FeedView({ zone, eventId }: Props) {
 
     return () => {
       cancelled = true;
-      supabase.removeChannel(channel);
+      supabase.removeChannel(dbChannel);
+      supabase.removeChannel(simChannel);
     };
   }, [eventId, isDemo]);
 

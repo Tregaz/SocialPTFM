@@ -122,22 +122,22 @@ export function useWebRTC({ eventId, zone, userId, enabled = true, onMessage }: 
   useEffect(() => {
     if (!enabled || isDemo) return;
     const channel = supabase
-      .channel(`pulse-event-${eventId}`)
+      .channel(`pulse-event-${eventId}-rtc`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "nodos_activos",
+          filter: `evento_id=eq.${eventId}`,
         },
         (payload) => {
           const n = payload.new as {
             peer_id_webrtc: string;
             zona_recinto: string;
             usuario_id: string;
-            evento_id: string;
           };
-          if (n.evento_id !== eventId || n.zona_recinto !== zone) return;
+          if (n.zona_recinto !== zone) return;
           if (n.usuario_id === myUserId) return;
           const peer = peerRef.current;
           if (!peer || !n.peer_id_webrtc) return;
