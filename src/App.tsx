@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, LogOut, MapPin } from "lucide-react";
+import { Bot, LogOut, MapPin, WifiOff } from "lucide-react";
 import { startBotSimulator } from "@/utils/botSimulator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BottomNav, type Tab } from "@/components/pulse/BottomNav";
@@ -27,6 +27,21 @@ function PulseApp() {
   const logoTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { nearbyEvents, activeEvent, status: geoStatus, position } = useGeofence();
+
+  // ── Offline Mode (Mesh Mode) detection ──────────────────────────────────
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
 
   // ── Auto-activate Modo Evento when GPS puts user inside an event radius ───
   useEffect(() => {
@@ -132,6 +147,21 @@ function PulseApp() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Offline / Mesh Mode indicator */}
+            {!isOnline && (
+              <div
+                className="flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold animate-pulse"
+                style={{
+                  background: "color-mix(in oklab, var(--danger) 25%, transparent)",
+                  color: "var(--danger)",
+                }}
+                title="Sin conexión a Internet — Modo Mesh activo"
+              >
+                <WifiOff className="h-3 w-3" />
+                MESH
+              </div>
+            )}
+
             {/* GPS status pill */}
             <div
               className={`flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold ${
