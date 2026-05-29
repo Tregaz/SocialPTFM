@@ -135,16 +135,42 @@ export const generateLiveNews = async () => {
   }
 };
 
+export const purgeOldData = async () => {
+  console.log("[IntelligentBots] Purging old data...");
+  const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+
+  try {
+    const { error: msgError } = await supabase
+      .from('mensajes')
+      .delete()
+      .lt('created_at', thirtyMinsAgo);
+    if (msgError) console.error("[IntelligentBots] Error purging messages:", msgError);
+
+    const { error: nodeError } = await supabase
+      .from('nodos_activos')
+      .delete()
+      .lt('created_at', tenMinsAgo);
+    if (nodeError) console.error("[IntelligentBots] Error purging nodes:", nodeError);
+
+    console.log("[IntelligentBots] Purge complete.");
+  } catch (err) {
+    console.error("[IntelligentBots] Unexpected error during purge:", err);
+  }
+};
+
 /**
  * Initializes the system in development mode.
  * Upserts major festivals and starts a loop to generate contextual news messages.
  */
 export function startIntelligentBots() {
   let timeoutId: ReturnType<typeof setTimeout>;
+  let purgeIntervalId: ReturnType<typeof setInterval>;
   let isRunning = true;
 
-  // Initial seed
+  // Initial seed and purge
   fetchProximosEventos();
+  purgeOldData();
 
   const loop = async () => {
     if (!isRunning) return;
@@ -155,12 +181,16 @@ export function startIntelligentBots() {
     timeoutId = setTimeout(loop, nextInterval);
   };
 
+  // Run purge every 5 minutes
+  purgeIntervalId = setInterval(purgeOldData, 5 * 60 * 1000);
+
   // Start the loop after a short delay to allow seeding to settle
   timeoutId = setTimeout(loop, 5000);
 
   return () => {
     isRunning = false;
     clearTimeout(timeoutId);
+    clearInterval(purgeIntervalId);
     console.log("[IntelligentBots] System stopped.");
   };
 }

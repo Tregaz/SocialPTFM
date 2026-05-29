@@ -104,9 +104,10 @@ export function FeedView({ zone, eventId }: Props) {
           event: "INSERT",
           schema: "public",
           table: "mensajes",
-          filter: `evento_id=eq.${eventId}`,
         },
         (payload) => {
+          const m = payload.new as { evento_id: string };
+          if (m.evento_id !== eventId) return;
           const newItem = dbRowToItem(payload.new as Parameters<typeof dbRowToItem>[0]);
           setItems((prev) => [newItem, ...prev]);
         },
