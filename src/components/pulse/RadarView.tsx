@@ -1,28 +1,8 @@
 import { useEffect, useState } from "react";
-import { MapPin, Radio, Users, Zap, LocateFixed, WifiOff, AlertTriangle } from "lucide-react";
+import { MapPin, Radio, Users, Zap, LocateFixed, WifiOff } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { distanceMeters, getPeerId } from "@/lib/pulse/session";
 import type { GeoStatus } from "@/hooks/useGeofence";
-
-function SaturationBanner({ zone, isRed }: { zone: string; isRed: boolean }) {
-  return (
-    <div className={`mx-4 mb-3 flex items-center gap-2 rounded-2xl px-4 py-3 animate-pulse ${
-      isRed ? "bg-[var(--danger)] text-white" : "bg-orange-500/20 text-orange-500 border border-orange-500/50"
-    }`}>
-      <AlertTriangle className="h-5 w-5 shrink-0" />
-      <div>
-        <p className="text-xs font-bold uppercase tracking-wider">
-          {isRed ? "ZONA ROJA · CRÍTICO" : "ALTA SATURACIÓN"}
-        </p>
-        <p className="text-[10px] opacity-90">
-          {isRed 
-            ? `Consenso de seguridad en ${zone}. Evita desplazamientos.` 
-            : `Mucha actividad en ${zone}. Acceso lento.`}
-        </p>
-      </div>
-    </div>
-  );
-}
 
 export type EventTheme = "festival" | "sport";
 
@@ -85,95 +65,8 @@ export function RadarView({
   const [activeEvent, setActiveEvent] = useState<PulseEvent | null>(selected?.event ?? null);
   const [zone, setZone] = useState<string | null>(selected?.zone ?? null);
   const [statusMsg, setStatusMsg] = useState("Escaneando frecuencia · GPS");
-  const [hotReports, setHotReports] = useState<Record<string, { userId: string; ts: number }[]>>({});
-  const [systemAlerts, setSystemAlerts] = useState<Record<string, number>>({});
-
-  useEffect(() => {
-    if (!activeEvent || activeEvent.id.startsWith("demo-")) return;
-
-    const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-    
-    (async () => {
-      const { data } = await supabase
-        .from("mensajes")
-        .select("usuario_id, zona_recinto, created_at")
-        .eq("evento_id", activeEvent.id)
-        .eq("hot", true)
-        .gt("created_at", fiveMinsAgo);
-
-      if (data) {
-        const reports: Record<string, { userId: string; ts: number }[]> = {};
-        data.forEach((m) => {
-          if (!reports[m.zona_recinto]) reports[m.zona_recinto] = [];
-          reports[m.zona_recinto].push({ userId: m.usuario_id, ts: new Date(m.created_at).getTime() });
-        });
-        setHotReports(reports);
-      }
-    })();
-
-    const channel = supabase
-      .channel(`pulse-event-${activeEvent.id}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "mensajes" }, (payload) => {
-        const m = payload.new as { evento_id: string; hot: boolean; zona_recinto: string; usuario_id: string };
-        if (m.evento_id !== activeEvent.id || !m.hot) return;
-        setHotReports((prev) => {
-          const next = { ...prev };
-          if (!next[m.zona_recinto]) next[m.zona_recinto] = [];
-          next[m.zona_recinto] = [...next[m.zona_recinto], { userId: m.usuario_id, ts: Date.now() }];
-          return next;
-        });
-      })
-      .on("broadcast", { event: "hot_alert" }, (msg) => {
-        const p = msg.payload as { usuario_nombre: string; zona_recinto: string };
-        if (p.usuario_nombre === "SISTEMA / CONTROL") {
-          setSystemAlerts((prev) => ({ ...prev, [p.zona_recinto]: Date.now() }));
-        }
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [activeEvent]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const fiveMins = 5 * 60 * 1000;
-      
-      setSystemAlerts((prev) => {
-        const next = { ...prev };
-        let changed = false;
-        for (const z in next) {
-          if (now - next[z] > fiveMins) {
-            delete next[z];
-            changed = true;
-          }
-        }
-        return changed ? next : prev;
-      });
-      
-      setHotReports((prev) => {
-        const next = { ...prev };
-        let changed = false;
-        for (const z in next) {
-          const filtered = next[z].filter(r => now - r.ts < fiveMins);
-          if (filtered.length !== next[z].length) {
-            next[z] = filtered;
-            changed = true;
-          }
-        }
-        return changed ? next : prev;
-      });
-    }, 10000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const isRedZone = (z: string) => {
-    if (systemAlerts[z]) return true;
-    const uniqueUsers = new Set(hotReports[z]?.map(r => r.userId) ?? []);
-    return uniqueUsers.size >= 3;
-  };
+  const [hotReports, setHotReports] = useState<Record<string, Set<string>>>({});
+  const [systemAlerts, setSystemAlerts] = useState<Record<string, boolean>>({});
 
   // If geofence provided events externally, use them directly
   useEffect(() => {
@@ -225,6 +118,67 @@ export function RadarView({
     })();
     return () => { cancelled = true; };
   }, [geofenceEvents, geoStatus, userLat, userLng]);
+
+  // ── Consensus Algorithm ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!activeEvent || activeEvent.id.startsWith("demo-")) return;
+
+    const eventId = activeEvent.id;
+    const radarChannel = supabase
+      .channel(`pulse-event-${eventId}-radar`)
+      .on(
+        "broadcast",
+        { event: "hot_alert" },
+        (payload: any) => {
+          const { zona_recinto, usuario_nombre } = payload.payload;
+          if (usuario_nombre === "SISTEMA / CONTROL" || usuario_nombre === "STAFF") {
+            setSystemAlerts((prev) => ({ ...prev, [zona_recinto]: true }));
+          }
+        },
+      )
+      .subscribe();
+
+    const msgChannel = supabase
+      .channel(`pulse-event-${eventId}-radar-msgs`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "mensajes",
+          filter: `evento_id=eq.${eventId}`,
+        },
+        (payload) => {
+          const m = payload.new as { zona_recinto: string; usuario_id: string; hot: boolean };
+          if (m.hot) {
+            setHotReports((prev) => {
+              const zoneSet = new Set(prev[m.zona_recinto] || []);
+              zoneSet.add(m.usuario_id);
+              return { ...prev, [m.zona_recinto]: zoneSet };
+            });
+          }
+        },
+      )
+      .subscribe();
+
+    // Clean up reports older than 5 mins
+    const interval = setInterval(() => {
+      setHotReports({});
+      setSystemAlerts({});
+    }, 5 * 60 * 1000);
+
+    return () => {
+      supabase.removeChannel(radarChannel);
+      supabase.removeChannel(msgChannel);
+      clearInterval(interval);
+    };
+  }, [activeEvent]);
+
+  const isRedZone = (z: string) => {
+    if (systemAlerts[z]) return true;
+    const uniqueUsers = hotReports[z]?.size || 0;
+    return uniqueUsers >= 3;
+  };
 
   const connect = async () => {
     if (!activeEvent || !zone) return;
@@ -384,31 +338,25 @@ export function RadarView({
                     Selecciona tu zona física
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    {e.zones.map((z) => (
-                      <button
-                        key={z}
-                        onClick={(ev) => { ev.stopPropagation(); setZone(z); }}
-                        className={`relative rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                          zone === z
-                            ? "neon-chip"
-                            : "border border-border bg-surface-2 text-muted-foreground"
-                        } ${isRedZone(z) ? "border-[var(--danger)] text-[var(--danger)]" : ""}`}
-                      >
-                        {z}
-                        {isRedZone(z) && (
-                          <span className="absolute -right-1 -top-1 flex h-3 w-3">
-                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--danger)] opacity-75"></span>
-                            <span className="relative inline-flex h-3 w-3 rounded-full bg-[var(--danger)]"></span>
-                          </span>
-                        )}
-                      </button>
-                    ))}
+                    {e.zones.map((z) => {
+                      const red = isRedZone(z);
+                      return (
+                        <button
+                          key={z}
+                          onClick={(ev) => { ev.stopPropagation(); setZone(z); }}
+                          className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                            zone === z
+                              ? "neon-chip"
+                              : red
+                              ? "bg-[var(--danger)] text-white border border-[var(--danger)]"
+                              : "border border-border bg-surface-2 text-muted-foreground"
+                          }`}
+                        >
+                          {z} {red && "🔥"}
+                        </button>
+                      );
+                    })}
                   </div>
-
-                  {zone && (isRedZone(zone) || e.liveUsers > 1000) && (
-                    <SaturationBanner zone={zone} isRed={isRedZone(zone)} />
-                  )}
-
                   <button
                     disabled={!zone}
                     onClick={(ev) => { ev.stopPropagation(); connect(); }}

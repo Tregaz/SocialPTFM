@@ -63,8 +63,6 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
   const [voted, setVoted] = useState<Record<string, number>>({});
   const [activity, setActivity] = useState(0);
   const [nodos, setNodos] = useState(0);
-  const [msgTimestamps, setMsgTimestamps] = useState<number[]>([]);
-  const { toast } = useToast();
   const endRef = useRef<HTMLDivElement>(null);
   const isDemoEvent = eventId.startsWith("demo-");
 
@@ -98,6 +96,9 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
     enabled: !isDemoEvent,
     onMessage: handleP2P,
   });
+
+  const { toast } = useToast();
+  const [msgHistory, setMsgHistory] = useState<number[]>([]);
 
   useEffect(() => {
     if (isDemoEvent) {
@@ -140,17 +141,16 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
     })();
 
     const channel = supabase
-      .channel(`pulse-event-${eventId}`)
+      .channel(`pulse-event-${eventId}-chat`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "mensajes" },
+        { event: "INSERT", schema: "public", table: "mensajes", filter: `evento_id=eq.${eventId}` },
         (payload) => {
           const m = payload.new as {
             id: string; usuario_id: string; usuario_nombre: string | null;
             texto: string; hot: boolean; zona_recinto: string; created_at: string;
-            evento_id: string;
           };
-          if (m.evento_id !== eventId || m.zona_recinto !== zone) return;
+          if (m.zona_recinto !== zone) return;
           setMsgs((prev) =>
             prev.some((x) => x.id === m.id)
               ? prev
@@ -162,12 +162,13 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       )
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "nodos_activos" },
+        { event: "INSERT", schema: "public", table: "nodos_activos", filter: `evento_id=eq.${eventId}` },
         (payload) => {
-          const n = payload.new as { zona_recinto: string; evento_id: string };
-          if (n.evento_id !== eventId || n.zona_recinto !== zone) return;
-          setNodos((c) => c + 1);
-          setActivity((a) => a + 1);
+          const n = payload.new as { zona_recinto: string };
+          if (n.zona_recinto === zone) {
+            setNodos((c) => c + 1);
+            setActivity((a) => a + 1);
+          }
         },
       )
       .subscribe();
@@ -183,38 +184,40 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
   }, [msgs]);
 
   const send = async () => {
-    const now = Date.now();
-    const recentMsgs = msgTimestamps.filter((ts) => now - ts < 30000);
+    const text = input.trim();
+    if (!text) return;
 
+    // Rate limiting: max 2 messages per 30 seconds
+    const now = Date.now();
+    const recentMsgs = msgHistory.filter((ts) => now - ts < 30000);
     if (recentMsgs.length >= 2) {
       toast({
-        title: "Límite alcanzado",
-        description: "Máximo 2 mensajes cada 30 segundos.",
+        title: "Wait",
+        description: "Estás enviando mensajes muy rápido. Espera un momento.",
         variant: "destructive",
       });
       return;
     }
+    setMsgHistory([...recentMsgs, now]);
 
-    const text = cleanText(input.trim());
-    if (!text) return;
-    const isHot = HOT_WORDS.some((w) => text.toLowerCase().includes(w));
+    const cleanedText = cleanText(text);
+    const isHot = HOT_WORDS.some((w) => cleanedText.toLowerCase().includes(w));
     setInput("");
-    setMsgTimestamps([...recentMsgs, now]);
 
     const localId = crypto.randomUUID();
     if (isDemoEvent) {
-      setMsgs((m) => [...m, { id: localId, user: "@tú", text, mine: true, hot: isHot }]);
+      setMsgs((m) => [...m, { id: localId, user: "@tú", text: cleanedText, mine: true, hot: isHot }]);
     } else {
       const { error } = await supabase.from("mensajes").insert({
         evento_id: eventId,
         zona_recinto: zone,
         usuario_id: usuarioId,
         usuario_nombre: usuarioNombre,
-        texto: text,
+        texto: cleanedText,
         hot: isHot,
       });
       if (error) console.error("Mensaje no enviado", error);
-      broadcast("chat", { id: localId, user: usuarioNombre, text, hot: isHot });
+      broadcast("chat", { id: localId, user: usuarioNombre, text: cleanedText, hot: isHot });
       if (isHot) broadcast("hype", { ts: Date.now() });
     }
 
