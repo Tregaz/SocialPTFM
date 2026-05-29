@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { MapPin, Radio, Users, Zap, LocateFixed, WifiOff } from "lucide-react";
+import { useEffect, useState, useMemo } from "react";
+import { MapPin, Radio, Users, Zap, LocateFixed, WifiOff, ArrowRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { distanceMeters, getPeerId } from "@/lib/pulse/session";
 import type { GeoStatus } from "@/hooks/useGeofence";
@@ -150,6 +150,62 @@ export function RadarView({
     return null;
   };
 
+  // ── Saturation threshold ──────────────────────────────────────────────────
+  const SATURATION_THRESHOLD = 5000;
+
+  const isSaturated = useMemo(() => {
+    if (!activeEvent) return false;
+    return activeEvent.liveUsers > SATURATION_THRESHOLD;
+  }, [activeEvent]);
+
+  const greenZoneSuggestion = useMemo(() => {
+    if (!isSaturated || !activeEvent) return null;
+    // Find the event with the lowest liveUsers among non-demo events
+    const best = [...found]
+      .filter((e) => e.id !== activeEvent.id)
+      .sort((a, b) => a.liveUsers - b.liveUsers);
+    return best.length > 0 ? best[0] : null;
+  }, [isSaturated, activeEvent, found]);
+
+  const SaturationBanner = () => {
+    if (!isSaturated || !greenZoneSuggestion) return null;
+    return (
+      <div className="mx-4 mb-3 overflow-hidden rounded-2xl border border-[var(--danger)]/40 animate-slide-up">
+        <div className="flex items-start gap-3 bg-[var(--danger)]/10 p-4">
+          <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-[var(--danger)]/20">
+            <Users className="h-4 w-4 text-[var(--danger)]" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-bold uppercase tracking-widest text-[var(--danger)]">
+              Zona Saturada
+            </p>
+            <p className="mt-1 text-sm leading-snug text-foreground">
+              {activeEvent!.name} tiene <strong className="text-[var(--danger)]">{activeEvent!.liveUsers.toLocaleString()}</strong> usuarios activos.
+              {greenZoneSuggestion && (
+                <span>
+                  {" "}Considera <strong className="text-[var(--neon)]">{greenZoneSuggestion.name}</strong> con solo{" "}
+                  {greenZoneSuggestion.liveUsers.toLocaleString()} usuarios.
+                </span>
+              )}
+            </p>
+            {greenZoneSuggestion && (
+              <button
+                onClick={() => {
+                  setActiveEvent(greenZoneSuggestion);
+                  setZone(null);
+                }}
+                className="mt-2 flex items-center gap-1.5 rounded-full bg-[var(--neon)] px-3 py-1.5 text-[11px] font-bold text-background transition active:scale-95"
+              >
+                <ArrowRight className="h-3.5 w-3.5" />
+                Ir a {greenZoneSuggestion.name.split(" · ")[0]}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col gap-6 pb-6">
       {/* Radar animation */}
@@ -204,6 +260,9 @@ export function RadarView({
       </p>
 
       {geoBanner()}
+
+      {/* 🔴 Mass Redirection Banner — suggests moving to a GREEN zone when saturated */}
+      <SaturationBanner />
 
       {/* Accuracy badge */}
       {geoStatus === "watching" && userLat !== undefined && (

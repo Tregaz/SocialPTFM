@@ -14,15 +14,6 @@ interface Msg {
 
 const HOT_WORDS = ["gol", "drop", "brutal", "temazo", "golazo", "bass"];
 
-const QUICK_TAGS = [
-  { value: "🔥 Termómetro al máximo", hot: true },
-  { value: "GOL!", hot: true },
-  { value: "TEMAZO", hot: true },
-  { value: "👏 Bravi", hot: false },
-  { value: "🎵 Sube el volumen", hot: false },
-  { value: "💥 BRUTAL", hot: true },
-];
-
 interface Poll {
   id: string;
   q: string;
@@ -148,14 +139,12 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       .channel(`zona-${eventId}-${zone}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "mensajes" },
+        { event: "INSERT", schema: "public", table: "mensajes", filter: `evento_id=eq.${eventId}` },
         (payload) => {
           const m = payload.new as {
             id: string; usuario_id: string; usuario_nombre: string | null;
             texto: string; hot: boolean; zona_recinto: string; created_at: string;
-            evento_id: string;
           };
-          if (m.evento_id !== eventId) return;
           if (m.zona_recinto !== zone) return;
           setMsgs((prev) =>
             prev.some((x) => x.id === m.id)
@@ -168,10 +157,9 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       )
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "nodos_activos" },
+        { event: "INSERT", schema: "public", table: "nodos_activos", filter: `evento_id=eq.${eventId}` },
         (payload) => {
-          const n = payload.new as { zona_recinto: string; evento_id: string };
-          if (n.evento_id !== eventId) return;
+          const n = payload.new as { zona_recinto: string };
           if (n.zona_recinto === zone) {
             setNodos((c) => c + 1);
             setActivity((a) => a + 1);
@@ -190,32 +178,34 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs]);
 
-  const sendMessage = useCallback((text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    const isHot = HOT_WORDS.some((w) => trimmed.toLowerCase().includes(w));
+  const send = async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
+    if (!text) return;
+    const isHot = HOT_WORDS.some((w) => text.toLowerCase().includes(w));
+    setInput("");
+
     const localId = crypto.randomUUID();
+    // ── Optimistic update: show message immediately ──────────────────────
+    setMsgs((m) => [...m, { id: localId, user: "@tú", text, mine: true, hot: isHot }]);
 
-    // Optimistic update: add message immediately
-    setMsgs((prev) => [...prev, { id: localId, user: `@${usuarioNombre}`, text: trimmed, mine: true, hot: isHot }]);
-
-    if (!isDemoEvent) {
-      // Broadcast immediately via WebRTC
-      broadcast("chat", { id: localId, user: usuarioNombre, text: trimmed, hot: isHot });
-      if (isHot) broadcast("hype", { ts: Date.now() });
-
-      // Persist to DB with the same ID so Realtime event is deduped
-      supabase.from("mensajes").insert({
-        id: localId,
+    if (isDemoEvent) {
+      // already optimistically added above
+    } else {
+      const { error } = await supabase.from("mensajes").insert({
         evento_id: eventId,
         zona_recinto: zone,
         usuario_id: usuarioId,
         usuario_nombre: usuarioNombre,
-        texto: trimmed,
+        texto: text,
         hot: isHot,
-      } as any).then(({ error }) => {
-        if (error) console.error("Mensaje no enviado", error);
       });
+      if (error) {
+        console.error("Mensaje no enviado", error);
+        // Remove optimistic message on error
+        setMsgs((m) => m.filter((x) => x.id !== localId));
+      }
+      broadcast("chat", { id: localId, user: usuarioNombre, text, hot: isHot });
+      if (isHot) broadcast("hype", { ts: Date.now() });
     }
 
     setActivity((a) => a + 1);
@@ -223,11 +213,10 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       triggerHype();
       setRep((r) => r + 3);
     }
-  }, [eventId, zone, usuarioId, usuarioNombre, isDemoEvent, broadcast]);
+  };
 
-  const send = () => {
-    sendMessage(input);
-    setInput("");
+  const handleTagClick = (tag: string) => {
+    send(tag);
   };
 
   const vote = (pid: string, idx: number) => {
@@ -335,24 +324,6 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       </section>
 
       <section className="px-4 pt-4 space-y-2">
-        {/* Quick Tags */}
-        {!isDemoEvent && (
-          <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-2 -mx-4 px-4">
-            {QUICK_TAGS.map((tag) => (
-              <button
-                key={tag.value}
-                onClick={() => sendMessage(tag.value)}
-                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition active:scale-95 ${
-                  tag.hot
-                    ? "neon-chip"
-                    : "border border-border bg-surface-2 text-muted-foreground hover:bg-surface"
-                }`}
-              >
-                {tag.value}
-              </button>
-            ))}
-          </div>
-        )}
         {msgs.map((m) => (
           <div key={m.id} className={`flex ${m.mine ? "justify-end" : "justify-start"}`}>
             <div
@@ -387,6 +358,19 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
         ))}
       </div>
 
+      {/* Quick Tags */}
+      <div className="fixed bottom-36 left-0 right-0 z-30 flex gap-1.5 overflow-x-auto px-3 pb-1 scrollbar-hide">
+        {["🔥 TEMAZO", "🎵 +1", "🚀 GOAL", "👋 AQUÍ", "🎯 DÓNDE"].map((tag) => (
+          <button
+            key={tag}
+            onClick={() => handleTagClick(tag)}
+            className="shrink-0 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-[11px] font-semibold text-muted-foreground transition hover:border-[var(--neon)] hover:text-foreground active:scale-95"
+          >
+            {tag}
+          </button>
+        ))}
+      </div>
+
       <div className="fixed bottom-16 left-0 right-0 z-30 glass border-t border-border px-3 py-2">
         <div className="flex items-center gap-2">
           <input
@@ -397,7 +381,7 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
             className="flex-1 rounded-full bg-surface-2 px-4 py-3 text-sm outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-[var(--neon)]"
           />
           <button
-            onClick={send}
+            onClick={() => send()}
             className="grid h-12 w-12 place-items-center rounded-full bg-[var(--neon)] text-background active:scale-95"
             aria-label="Enviar"
           >
