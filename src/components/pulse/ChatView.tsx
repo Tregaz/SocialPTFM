@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Brain, Coins, Send, TrendingUp, Users, Wifi } from "lucide-react";
+import { Brain, Coins, Send, TrendingUp, Users, Wifi } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useWebRTC, type P2PMessage } from "@/hooks/useWebRTC";
 
@@ -12,7 +12,16 @@ interface Msg {
   created_at?: string;
 }
 
-const HOT_WORDS = ["gol", "drop", "brutal", "temazo", "golazo", "bass", "🔴", "collapse", "colapso", "urgente", "filling"];
+const HOT_WORDS = ["gol", "drop", "brutal", "temazo", "golazo", "bass"];
+
+const QUICK_TAGS = [
+  { value: "🔥 Termómetro al máximo", hot: true },
+  { value: "GOL!", hot: true },
+  { value: "TEMAZO", hot: true },
+  { value: "👏 Bravi", hot: false },
+  { value: "🎵 Sube el volumen", hot: false },
+  { value: "💥 BRUTAL", hot: true },
+];
 
 interface Poll {
   id: string;
@@ -62,20 +71,7 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
   const [activity, setActivity] = useState(0);
   const [nodos, setNodos] = useState(0);
   const endRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const isDemoEvent = eventId.startsWith("demo-");
-
-  const QUICK_TAGS = [
-    { label: "🟢 Fluid", value: "🟢 Fluid" },
-    { label: "🟡 Filling", value: "🟡 Filling" },
-    { label: "🔴 Collapse", value: "🔴 Collapse" },
-    { label: "🍻 Bar", value: "🍻 Bar" },
-  ];
-
-  const handleTagClick = (tag: string) => {
-    setInput((prev) => (prev ? `${prev} ${tag}` : tag));
-    inputRef.current?.focus();
-  };
 
   const triggerHype = () => {
     setShake(true);
@@ -152,12 +148,14 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       .channel(`zona-${eventId}-${zone}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "mensajes", filter: `evento_id=eq.${eventId}` },
+        { event: "INSERT", schema: "public", table: "mensajes" },
         (payload) => {
           const m = payload.new as {
             id: string; usuario_id: string; usuario_nombre: string | null;
             texto: string; hot: boolean; zona_recinto: string; created_at: string;
+            evento_id: string;
           };
+          if (m.evento_id !== eventId) return;
           if (m.zona_recinto !== zone) return;
           setMsgs((prev) =>
             prev.some((x) => x.id === m.id)
@@ -170,9 +168,10 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       )
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "nodos_activos", filter: `evento_id=eq.${eventId}` },
+        { event: "INSERT", schema: "public", table: "nodos_activos" },
         (payload) => {
-          const n = payload.new as { zona_recinto: string };
+          const n = payload.new as { zona_recinto: string; evento_id: string };
+          if (n.evento_id !== eventId) return;
           if (n.zona_recinto === zone) {
             setNodos((c) => c + 1);
             setActivity((a) => a + 1);
@@ -191,27 +190,32 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs]);
 
-  const send = async () => {
-    const text = input.trim();
-    if (!text) return;
-    const isHot = HOT_WORDS.some((w) => text.toLowerCase().includes(w));
-    setInput("");
-
+  const sendMessage = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const isHot = HOT_WORDS.some((w) => trimmed.toLowerCase().includes(w));
     const localId = crypto.randomUUID();
-    if (isDemoEvent) {
-      setMsgs((m) => [...m, { id: localId, user: "@tú", text, mine: true, hot: isHot }]);
-    } else {
-      const { error } = await supabase.from("mensajes").insert({
+
+    // Optimistic update: add message immediately
+    setMsgs((prev) => [...prev, { id: localId, user: `@${usuarioNombre}`, text: trimmed, mine: true, hot: isHot }]);
+
+    if (!isDemoEvent) {
+      // Broadcast immediately via WebRTC
+      broadcast("chat", { id: localId, user: usuarioNombre, text: trimmed, hot: isHot });
+      if (isHot) broadcast("hype", { ts: Date.now() });
+
+      // Persist to DB with the same ID so Realtime event is deduped
+      supabase.from("mensajes").insert({
+        id: localId,
         evento_id: eventId,
         zona_recinto: zone,
         usuario_id: usuarioId,
         usuario_nombre: usuarioNombre,
-        texto: text,
+        texto: trimmed,
         hot: isHot,
+      } as any).then(({ error }) => {
+        if (error) console.error("Mensaje no enviado", error);
       });
-      if (error) console.error("Mensaje no enviado", error);
-      broadcast("chat", { id: localId, user: usuarioNombre, text, hot: isHot });
-      if (isHot) broadcast("hype", { ts: Date.now() });
     }
 
     setActivity((a) => a + 1);
@@ -219,6 +223,11 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       triggerHype();
       setRep((r) => r + 3);
     }
+  }, [eventId, zone, usuarioId, usuarioNombre, isDemoEvent, broadcast]);
+
+  const send = () => {
+    sendMessage(input);
+    setInput("");
   };
 
   const vote = (pid: string, idx: number) => {
@@ -325,39 +334,41 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
         </div>
       </section>
 
-      <section className="px-4 pt-4 space-y-3">
+      <section className="px-4 pt-4 space-y-2">
+        {/* Quick Tags */}
+        {!isDemoEvent && (
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-2 -mx-4 px-4">
+            {QUICK_TAGS.map((tag) => (
+              <button
+                key={tag.value}
+                onClick={() => sendMessage(tag.value)}
+                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition active:scale-95 ${
+                  tag.hot
+                    ? "neon-chip"
+                    : "border border-border bg-surface-2 text-muted-foreground hover:bg-surface"
+                }`}
+              >
+                {tag.value}
+              </button>
+            ))}
+          </div>
+        )}
         {msgs.map((m) => (
           <div key={m.id} className={`flex ${m.mine ? "justify-end" : "justify-start"}`}>
             <div
-              className={`relative max-w-[85%] px-4 py-2 text-sm shadow-sm transition-all animate-slide-up ${
+              className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm animate-slide-up ${
                 m.mine
-                  ? "bg-emerald-600 text-white rounded-2xl rounded-tr-none"
+                  ? "bg-[var(--neon)] text-background"
                   : m.hot
-                  ? "bg-red-500/20 border border-red-500/50 text-white rounded-2xl rounded-tl-none"
-                  : "bg-zinc-700 text-white rounded-2xl rounded-tl-none"
+                  ? "neon-border bg-surface"
+                  : "bg-surface border border-border"
               }`}
             >
               {!m.mine && (
-                <p className="mb-1 text-[10px] font-bold text-zinc-400">
-                  {m.user}
-                </p>
+                <p className="mb-0.5 text-[10px] font-bold text-muted-foreground">{m.user}</p>
               )}
-              <div className="flex items-start gap-2">
-                <p className="leading-relaxed">{m.text}</p>
-                {m.hot && (
-                  <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />
-                )}
-              </div>
-              {m.hot && (
-                <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-red-400">
-                  Aviso Crítico
-                </p>
-              )}
-              {m.created_at && (
-                <p className={`mt-1 text-right text-[9px] ${m.mine ? "text-emerald-200" : "text-zinc-400"}`}>
-                  {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </p>
-              )}
+              <p className="leading-snug">{m.text}</p>
+              {m.hot && <p className="mt-1 text-[10px] neon-text">🔥 Termómetro al máximo</p>}
             </div>
           </div>
         ))}
@@ -377,29 +388,17 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       </div>
 
       <div className="fixed bottom-16 left-0 right-0 z-30 glass border-t border-border px-3 py-2">
-        <div className="mb-2 flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
-          {QUICK_TAGS.map((tag) => (
-            <button
-              key={tag.value}
-              onClick={() => handleTagClick(tag.value)}
-              className="whitespace-nowrap rounded-full bg-surface-2 px-3 py-1 text-xs font-medium hover:bg-surface-3 transition-colors"
-            >
-              {tag.label}
-            </button>
-          ))}
-        </div>
         <div className="flex items-center gap-2">
           <input
-            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && send()}
             placeholder="Escribe al megáfono…"
-            className="flex-1 rounded-full bg-surface-2 px-4 py-3 text-sm outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-emerald-500/50"
+            className="flex-1 rounded-full bg-surface-2 px-4 py-3 text-sm outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-[var(--neon)]"
           />
           <button
             onClick={send}
-            className="grid h-12 w-12 place-items-center rounded-full bg-emerald-600 text-white active:scale-95 shadow-lg"
+            className="grid h-12 w-12 place-items-center rounded-full bg-[var(--neon)] text-background active:scale-95"
             aria-label="Enviar"
           >
             <Send className="h-5 w-5" />
