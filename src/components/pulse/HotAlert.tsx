@@ -21,7 +21,7 @@ export function HotAlert({ eventId }: Props) {
     if (!eventId || eventId.startsWith("demo-")) return;
 
     const channel = supabase
-      .channel(`pulse-sim-${eventId}`)
+      .channel(`pulse-event-${eventId}`)
       .on(
         "broadcast",
         { event: "hot_alert" },

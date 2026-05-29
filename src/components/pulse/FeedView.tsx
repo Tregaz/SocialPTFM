@@ -96,8 +96,8 @@ export function FeedView({ zone, eventId }: Props) {
     })();
 
     // Real messages from DB (postgres changes)
-    const dbChannel = supabase
-      .channel(`feed-db-${eventId}`)
+    const channel = supabase
+      .channel(`pulse-event-${eventId}`)
       .on(
         "postgres_changes",
         {
@@ -112,11 +112,6 @@ export function FeedView({ zone, eventId }: Props) {
           setItems((prev) => [newItem, ...prev]);
         },
       )
-      .subscribe();
-
-    // Ephemeral bot messages via Broadcast (no DB write)
-    const simChannel = supabase
-      .channel(`pulse-sim-${eventId}`)
       .on(
         "broadcast",
         { event: "bot_message" },
@@ -142,8 +137,7 @@ export function FeedView({ zone, eventId }: Props) {
 
     return () => {
       cancelled = true;
-      supabase.removeChannel(dbChannel);
-      supabase.removeChannel(simChannel);
+      supabase.removeChannel(channel);
     };
   }, [eventId, isDemo]);
 
