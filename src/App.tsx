@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, LogOut, MapPin, QrCode, X } from "lucide-react";
+import { Bot, LogOut, MapPin, QrCode } from "lucide-react";
 import { startBotSimulator } from "@/utils/botSimulator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BottomNav, type Tab } from "@/components/pulse/BottomNav";
@@ -10,6 +10,7 @@ import { AdminView } from "@/components/pulse/AdminView";
 import { HotAlert } from "@/components/pulse/HotAlert";
 import { LoginGate } from "@/components/pulse/LoginGate";
 import { ShareQR } from "@/components/pulse/ShareQR";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/useAuth";
 import { useGeofence } from "@/hooks/useGeofence";
 import { supabase } from "@/integrations/supabase/client";
@@ -46,45 +47,16 @@ function PulseApp() {
     return () => clearTimeout(t);
   }, [activeEvent, selection]);
 
-  // ── Auto-pairing from URL params (QR scan) ────────────────────────────────
+  // ── Auto-pairing from URL params on launch ──────────────────────────────
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const urlEventId = params.get("eventId");
-    const urlZona = params.get("zona");
-    if (!urlEventId || !urlZona) return;
-
-    (async () => {
-      const { data, error } = await supabase
-        .from("eventos")
-        .select("id, nombre, venue, tema, latitud, longitud, radio_metros, zonas")
-        .eq("id", urlEventId)
-        .single();
-
-      if (error || !data) {
-        console.error("[App] Auto-pairing failed:", error?.message);
-        return;
-      }
-
-      const event: PulseEvent = {
-        id: data.id,
-        name: data.nombre,
-        venue: data.venue ?? "",
-        theme: data.tema === "sport" ? "sport" : "festival",
-        liveUsers: 0,
-        zones: data.zonas?.length ? data.zonas : ["Pista", "VIP"],
-        cover:
-          data.tema === "sport"
-            ? "linear-gradient(135deg, oklch(0.55 0.22 145), oklch(0.4 0.18 200))"
-            : "linear-gradient(135deg, oklch(0.55 0.28 350), oklch(0.45 0.25 300))",
-        lat: data.latitud,
-        lng: data.longitud,
-        radio: data.radio_metros,
-      };
-
-      handleSelect(event, urlZona);
-      // Clean URL params to prevent re-triggering on refresh
-      window.history.replaceState({}, "", window.location.pathname);
-    })();
+    const invitedBy = params.get("invitedBy");
+    const eventId = params.get("eventId");
+    const zona = params.get("zona");
+    if (invitedBy && eventId && zona) {
+      setSelection({ event: { id: eventId, name: "Evento", venue: "", theme: "festival", liveUsers: 0, zones: [zona], cover: "" }, zone: zona });
+      setTab("feed");
+    }
   }, []);
 
   const handleSelect = (event: PulseEvent, zone: string) => {
@@ -138,27 +110,6 @@ function PulseApp() {
     >
       {/* Global HOT alert interrupt — listens to all users */}
       <HotAlert eventId={selection?.event.id ?? null} />
-
-      {/* QR Share Modal */}
-      {showQR && selection && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
-          <div className="relative w-full max-w-sm animate-slide-up rounded-3xl border border-border bg-surface p-6 shadow-2xl">
-            <button
-              onClick={() => setShowQR(false)}
-              className="absolute right-4 top-4 grid h-8 w-8 place-items-center rounded-full bg-surface-2 text-muted-foreground hover:text-foreground transition"
-              aria-label="Cerrar"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            <ShareQR
-              userId={usuarioId}
-              eventId={selection.event.id}
-              zona={selection.zone}
-              displayName={usuarioNombre}
-            />
-          </div>
-        </div>
-      )}
 
       {/* Auto-detection banner */}
       {modoBanner && (
@@ -222,15 +173,6 @@ function PulseApp() {
                 {selection.zone}
               </span>
             )}
-            {selection && (
-              <button
-                onClick={() => setShowQR(true)}
-                className="grid h-8 w-8 place-items-center rounded-full bg-surface-2 text-muted-foreground hover:text-foreground transition"
-                aria-label="Compartir QR"
-              >
-                <QrCode className="h-4 w-4" />
-              </button>
-            )}
             <button
               onClick={() => setSimActive((v) => !v)}
               title={simActive ? "Simulación ON — click para apagar" : "Simulación OFF — click para encender"}
@@ -243,6 +185,15 @@ function PulseApp() {
               <Bot className="h-3 w-3" />
               {simActive ? "SIM ON" : "SIM"}
             </button>
+            {selection && (
+              <button
+                onClick={() => setShowQR(true)}
+                className="grid h-8 w-8 place-items-center rounded-full bg-surface-2 text-muted-foreground"
+                aria-label="Compartir QR"
+              >
+                <QrCode className="h-4 w-4" />
+              </button>
+            )}
             <button
               onClick={() => supabase.auth.signOut()}
               className="grid h-8 w-8 place-items-center rounded-full bg-surface-2 text-muted-foreground"
@@ -267,7 +218,12 @@ function PulseApp() {
           />
         )}
         {tab === "feed" && selection && (
-          <FeedView zone={selection.zone} eventId={selection.event.id} usuarioId={usuarioId} usuarioNombre={usuarioNombre} />
+          <FeedView
+            zone={selection.zone}
+            eventId={selection.event.id}
+            usuarioId={usuarioId}
+            usuarioNombre={usuarioNombre}
+          />
         )}
         {tab === "chat" && selection && (
           <ChatView
@@ -284,6 +240,20 @@ function PulseApp() {
           />
         )}
       </main>
+
+      {/* Share QR Modal */}
+      <Dialog open={showQR} onOpenChange={setShowQR}>
+        <DialogContent className="w-[90%] max-w-sm rounded-3xl border border-border bg-surface p-6">
+          {selection && (
+            <ShareQR
+              userId={usuarioId}
+              eventId={selection.event.id}
+              zona={selection.zone}
+              displayName={usuarioNombre}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       <BottomNav
         active={tab}
