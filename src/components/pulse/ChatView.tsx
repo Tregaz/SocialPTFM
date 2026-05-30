@@ -77,21 +77,19 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
     setActivity((a) => a + 1);
     if (msg.type === "chat") {
       const p = msg.payload as { id: string; user: string; text: string; hot: boolean };
-      const isPhoto = p.text.startsWith("PHOTO:");
-      setMsgs((prev) =>
-        prev.some((x) => x.id === p.id)
-          ? prev
-          : [
-              ...prev,
-              {
-                id: p.id,
-                user: p.user,
-                text: isPhoto ? "" : p.text,
-                photoUrl: isPhoto ? p.text.replace("PHOTO:", "") : undefined,
-                hot: p.hot,
-              },
-            ],
-      );
+      if (p.text.startsWith("PHOTO:")) {
+        setMsgs((prev) =>
+          prev.some((x) => x.id === p.id)
+            ? prev
+            : [...prev, { id: p.id, user: p.user, text: "", photoUrl: p.text.slice(6), hot: p.hot }],
+        );
+      } else {
+        setMsgs((prev) =>
+          prev.some((x) => x.id === p.id)
+            ? prev
+            : [...prev, { id: p.id, user: p.user, text: p.text, hot: p.hot }],
+        );
+      }
       if (p.hot) triggerHype();
     } else if (msg.type === "hype") {
       triggerHype();
@@ -128,12 +126,13 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       if (!cancelled && data) {
         setMsgs(
           data.map((m) => {
-            const isPhoto = m.texto?.startsWith("PHOTO:");
+            const txt = m.texto ?? "";
+            const isPhoto = txt.startsWith("PHOTO:");
             return {
               id: m.id,
               user: m.usuario_nombre ?? "@anon",
-              text: isPhoto ? "" : m.texto,
-              photoUrl: isPhoto ? m.texto.replace("PHOTO:", "") : undefined,
+              text: isPhoto ? "" : txt,
+              photoUrl: isPhoto ? txt.slice(6) : undefined,
               hot: m.hot,
               mine: m.usuario_id === usuarioId,
               created_at: m.created_at,
@@ -161,22 +160,12 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
             texto: string; hot: boolean; zona_recinto: string; created_at: string;
           };
           if (m.zona_recinto !== zone) return;
-          const isPhoto = m.texto?.startsWith("PHOTO:");
+          const txt = m.texto ?? "";
+          const isPhoto = txt.startsWith("PHOTO:");
           setMsgs((prev) =>
             prev.some((x) => x.id === m.id)
               ? prev
-              : [
-                  ...prev,
-                  {
-                    id: m.id,
-                    user: m.usuario_nombre ?? "@anon",
-                    text: isPhoto ? "" : m.texto,
-                    photoUrl: isPhoto ? m.texto.replace("PHOTO:", "") : undefined,
-                    hot: m.hot,
-                    mine: m.usuario_id === usuarioId,
-                    created_at: m.created_at,
-                  },
-                ],
+              : [...prev, { id: m.id, user: m.usuario_nombre ?? "@anon", text: isPhoto ? "" : txt, photoUrl: isPhoto ? txt.slice(6) : undefined, hot: m.hot, mine: m.usuario_id === usuarioId, created_at: m.created_at }],
           );
           setActivity((a) => a + 1);
           if (m.hot && m.usuario_id !== usuarioId) triggerHype();
@@ -213,18 +202,7 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
 
     const localId = crypto.randomUUID();
     if (isDemoEvent) {
-      const isPhoto = text.startsWith("PHOTO:");
-      setMsgs((m) => [
-        ...m,
-        {
-          id: localId,
-          user: "@tú",
-          text: isPhoto ? "" : text,
-          photoUrl: isPhoto ? text.replace("PHOTO:", "") : undefined,
-          mine: true,
-          hot: isHot,
-        },
-      ]);
+      setMsgs((m) => [...m, { id: localId, user: "@tú", text, mine: true, hot: isHot }]);
     } else {
       const { error } = await supabase.from("mensajes").insert({
         evento_id: eventId,
@@ -354,24 +332,32 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
         {msgs.map((m) => (
           <div key={m.id} className={`flex ${m.mine ? "justify-end" : "justify-start"}`}>
             <div
-              className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm animate-slide-up ${
-                m.mine
-                  ? "bg-[var(--neon)] text-background"
+              className={`max-w-[80%] rounded-2xl text-sm animate-slide-up ${
+                m.photoUrl
+                  ? "overflow-hidden rounded-2xl border border-border bg-surface"
+                  : m.mine
+                  ? "bg-[var(--neon)] text-background px-3 py-2"
                   : m.hot
-                  ? "neon-border bg-surface"
-                  : "bg-surface border border-border"
+                  ? "neon-border bg-surface px-3 py-2"
+                  : "bg-surface border border-border px-3 py-2"
               }`}
             >
-              {!m.mine && (
+              {!m.mine && !m.photoUrl && (
                 <p className="mb-0.5 text-[10px] font-bold text-muted-foreground">{m.user}</p>
               )}
-              {m.text && <p className="leading-snug">{m.text}</p>}
-              {m.photoUrl && (
-                <img 
-                  src={m.photoUrl} 
-                  alt="Chat photo" 
-                  className="mt-2 rounded-xl w-full object-cover max-h-60" 
-                />
+              {m.photoUrl ? (
+                <div>
+                  {!m.mine && (
+                    <p className="px-3 pt-2 pb-1 text-[10px] font-bold text-muted-foreground">{m.user}</p>
+                  )}
+                  <img
+                    src={m.photoUrl}
+                    alt="Foto compartida"
+                    className="w-full aspect-[3/4] object-cover"
+                  />
+                </div>
+              ) : (
+                <p className="leading-snug">{m.text}</p>
               )}
               {m.hot && <p className="mt-1 text-[10px] neon-text">🔥 Termómetro al máximo</p>}
             </div>
