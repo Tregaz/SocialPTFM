@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, LogOut, MapPin } from "lucide-react";
+import { Bot, LogOut, MapPin, QrCode } from "lucide-react";
 import { startBotSimulator } from "@/utils/botSimulator";
 import { startIntelligentBots } from "@/utils/intelligentBots";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,6 +10,14 @@ import { ChatView } from "@/components/pulse/ChatView";
 import { AdminView } from "@/components/pulse/AdminView";
 import { HotAlert } from "@/components/pulse/HotAlert";
 import { LoginGate } from "@/components/pulse/LoginGate";
+import { ShareQR } from "@/components/pulse/ShareQR";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/useAuth";
 import { useGeofence } from "@/hooks/useGeofence";
 import { supabase } from "@/integrations/supabase/client";
@@ -28,6 +36,28 @@ function PulseApp() {
   const logoTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { nearbyEvents, activeEvent, status: geoStatus, position } = useGeofence();
+
+  useEffect(() => {
+    const stop = startIntelligentBots();
+    return stop;
+  }, []);
+
+  // ── Auto-pairing via URL params ──────────────────────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const eventId = params.get("eventId");
+    const zona = params.get("zona");
+
+    if (eventId && zona && nearbyEvents.length > 0) {
+      const event = nearbyEvents.find((e) => e.id === eventId);
+      if (event) {
+        setSelection({ event, zone: zona });
+        setTab("feed");
+        // Clear URL to avoid re-triggering
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+  }, [nearbyEvents]);
 
   // ── Auto-activate Modo Evento when GPS puts user inside an event radius ───
   useEffect(() => {
@@ -50,12 +80,6 @@ function PulseApp() {
     autoActivatedId.current = event.id;
     setTab("feed");
   };
-
-  // ── Start intelligent bots (auto-purge + live news) ────────────────
-  useEffect(() => {
-    const stop = startIntelligentBots();
-    return stop;
-  }, []);
 
   useEffect(() => {
     const eventId = selection?.event.id;
@@ -177,6 +201,33 @@ function PulseApp() {
               <Bot className="h-3 w-3" />
               {simActive ? "SIM ON" : "SIM"}
             </button>
+
+            {selection && (
+              <Dialog>
+                <DialogTrigger asChild>
+                  <button
+                    className="grid h-8 w-8 place-items-center rounded-full bg-surface-2 text-muted-foreground transition hover:text-[var(--neon)]"
+                    aria-label="Compartir QR"
+                  >
+                    <QrCode className="h-4 w-4" />
+                  </button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-md bg-background border-border">
+                  <DialogHeader>
+                    <DialogTitle className="text-center text-lg font-bold tracking-tight">
+                      Comparte el Pulse
+                    </DialogTitle>
+                  </DialogHeader>
+                  <ShareQR
+                    userId={usuarioId}
+                    eventId={selection.event.id}
+                    zona={selection.zone}
+                    displayName={usuarioNombre}
+                  />
+                </DialogContent>
+              </Dialog>
+            )}
+
             <button
               onClick={() => supabase.auth.signOut()}
               className="grid h-8 w-8 place-items-center rounded-full bg-surface-2 text-muted-foreground"
@@ -201,12 +252,7 @@ function PulseApp() {
           />
         )}
         {tab === "feed" && selection && (
-          <FeedView
-            zone={selection.zone}
-            eventId={selection.event.id}
-            userId={usuarioId}
-            userName={usuarioNombre}
-          />
+          <FeedView zone={selection.zone} eventId={selection.event.id} />
         )}
         {tab === "chat" && selection && (
           <ChatView

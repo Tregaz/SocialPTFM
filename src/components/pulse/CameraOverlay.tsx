@@ -52,12 +52,41 @@ export function CameraOverlay({ onCapture, onClose }: Props) {
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d")!;
-    ctx.drawImage(video, 0, 0);
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
 
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+    // Target 9:16
+    const targetRatio = 9 / 16;
+    let sw, sh, sx, sy;
+
+    if (vw / vh > targetRatio) {
+      // Video is wider than target (e.g. horizontal)
+      sh = vh;
+      sw = vh * targetRatio;
+      sx = (vw - sw) / 2;
+      sy = 0;
+    } else {
+      // Video is taller than target
+      sw = vw;
+      sh = vw / targetRatio;
+      sx = 0;
+      sy = (vh - sh) / 2;
+    }
+
+    // High quality vertical capture
+    canvas.width = 720;
+    canvas.height = 1280;
+    const ctx = canvas.getContext("2d")!;
+
+    // Mirror if using front camera
+    if (facingMode === "user") {
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 720, 1280);
+
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
     onCapture(dataUrl);
 
     if (streamRef.current) {

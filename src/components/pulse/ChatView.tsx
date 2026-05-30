@@ -119,7 +119,7 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
           data.map((m) => ({
             id: m.id,
             user: m.usuario_nombre ?? "@anon",
-            text: m.texto?.startsWith("PHOTO:") ? "[Foto]" : m.texto,
+            text: m.texto,
             hot: m.hot,
             mine: m.usuario_id === usuarioId,
             created_at: m.created_at,
@@ -149,7 +149,7 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
           setMsgs((prev) =>
             prev.some((x) => x.id === m.id)
               ? prev
-              : [...prev, { id: m.id, user: m.usuario_nombre ?? "@anon", text: m.texto?.startsWith("PHOTO:") ? "[Foto]" : m.texto, hot: m.hot, mine: m.usuario_id === usuarioId, created_at: m.created_at }],
+              : [...prev, { id: m.id, user: m.usuario_nombre ?? "@anon", text: m.texto, hot: m.hot, mine: m.usuario_id === usuarioId, created_at: m.created_at }],
           );
           setActivity((a) => a + 1);
           if (m.hot && m.usuario_id !== usuarioId) triggerHype();
