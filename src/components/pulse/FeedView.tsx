@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Camera, Flag, Flame, Wifi } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { CameraOverlay } from "@/components/pulse/CameraOverlay";
 
 interface FeedItem {
   id: string;
@@ -8,7 +9,7 @@ interface FeedItem {
   peerId: string;
   gradient: string;
   caption: string;
-  isPhoto: boolean;
+  photoUrl?: string;
   likes: number;
   liked: boolean;
   reported: boolean;
@@ -46,15 +47,15 @@ function dbRowToItem(row: {
   created_at?: string | null;
   hot?: boolean | null;
 }): FeedItem {
-  const rawText = row.texto ?? "";
-  const isPhoto = rawText.startsWith("PHOTO:");
+  const text = row.texto ?? "";
+  const isPhoto = text.startsWith("PHOTO:");
   return {
     id: row.id,
     author: row.usuario_nombre ? `@${row.usuario_nombre}` : "@anon",
     peerId: row.peer_id ?? "peer:db",
     gradient: gradientFor(row.id),
-    caption: isPhoto ? rawText.slice(6) : rawText,
-    isPhoto,
+    caption: isPhoto ? "" : text,
+    photoUrl: isPhoto ? text.replace("PHOTO:", "") : undefined,
     likes: 0,
     liked: false,
     reported: false,
@@ -72,6 +73,8 @@ interface Props {
 export function FeedView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showCamera, setShowCamera] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const isDemo = !eventId || eventId.startsWith("demo-");
 
   useEffect(() => {
@@ -127,15 +130,13 @@ export function FeedView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
         { event: "bot_message" },
         (msg: { payload: { id: string; author: string; zone: string; text: string; hot: boolean; ts: string } }) => {
           const p = msg.payload;
-          const isPhoto = p.text.startsWith("PHOTO:");
           setItems((prev) => [
             {
               id: p.id,
               author: `@${p.author}`,
               peerId: `sim:${p.zone}`,
               gradient: gradientFor(p.id),
-              caption: isPhoto ? p.text.slice(6) : p.text,
-              isPhoto,
+              caption: p.text,
               likes: 0,
               liked: false,
               reported: false,
@@ -164,26 +165,56 @@ export function FeedView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
   const report = (id: string) =>
     setItems((xs) => xs.map((x) => (x.id === id ? { ...x, reported: true } : x)));
 
+  const handleCapture = async (dataUrl: string) => {
+    if (isDemo) return;
+    setUploading(true);
+    try {
+      // Compress: convert dataUrl to blob
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      const fileName = `feed_${usuarioId}_${Date.now()}.jpg`;
+      const filePath = `feed-photos/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("pulse-media")
+        .upload(filePath, blob, { contentType: "image/jpeg" });
+
+      if (uploadError) {
+        console.error("[FeedView] Upload error:", uploadError.message);
+        setUploading(false);
+        return;
+      }
+
+      const { data: urlData } = supabase.storage.from("pulse-media").getPublicUrl(filePath);
+      const photoUrl = urlData?.publicUrl ?? "";
+
+      if (!photoUrl) {
+        console.error("[FeedView] Failed to get public URL");
+        setUploading(false);
+        return;
+      }
+
+      // Insert message with PHOTO: prefix
+      const { error: insertError } = await supabase.from("mensajes").insert({
+        evento_id: eventId,
+        zona_recinto: zone,
+        usuario_id: usuarioId,
+        usuario_nombre: usuarioNombre,
+        texto: `PHOTO:${photoUrl}`,
+        hot: false,
+      });
+
+      if (insertError) {
+        console.error("[FeedView] Insert error:", insertError.message);
+      }
+    } catch (err) {
+      console.error("[FeedView] Capture/upload failed:", err);
+    }
+    setUploading(false);
+  };
+
   const capture = () => {
-    const id = crypto.randomUUID();
-    const colors = ["#ff2d87", "#00d27a", "#7a00ff", "#ff7a00"];
-    const a = colors[Math.floor(Math.random() * colors.length)];
-    const b = colors[Math.floor(Math.random() * colors.length)];
-    setItems((xs) => [
-      {
-        id,
-        author: "@tú",
-        peerId: "peer:local",
-        gradient: `linear-gradient(135deg, ${a}, ${b})`,
-        caption: "Captura en vivo",
-        isPhoto: false,
-        likes: 0,
-        liked: false,
-        reported: false,
-        ago: "ahora",
-      },
-      ...xs,
-    ]);
+    setShowCamera(true);
   };
 
   return (
@@ -216,7 +247,7 @@ export function FeedView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
             key={it.id}
             className="overflow-hidden rounded-3xl border border-border bg-surface animate-slide-up"
           >
-            <div className="relative aspect-[4/5]" style={{ background: it.gradient }}>
+            <div className={`relative ${it.photoUrl ? "" : "aspect-[4/5]"}`} style={{ background: it.gradient }}>
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
               <div className="absolute left-3 top-3 flex items-center gap-2 rounded-full bg-black/50 px-2 py-1 text-[10px] backdrop-blur">
                 <span className="h-1.5 w-1.5 rounded-full bg-[var(--neon-2)] animate-pulse-dot" />
@@ -225,12 +256,12 @@ export function FeedView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
               <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold">{it.author} · <span className="text-white/60 text-xs">{it.ago}</span></p>
-                  {it.isPhoto ? (
+                  {it.photoUrl ? (
                     <img
-                      src={it.caption}
-                      alt="Foto compartida"
-                      className="mt-1 max-w-full rounded-xl border border-white/20"
-                      style={{ maxHeight: "200px", objectFit: "cover" }}
+                      src={it.photoUrl}
+                      alt="Foto del feed"
+                      className="max-h-60 w-full object-cover rounded-xl mt-2 shadow-glow"
+                      loading="lazy"
                     />
                   ) : (
                     <p className="text-sm text-white/90">{it.caption}</p>
@@ -260,6 +291,27 @@ export function FeedView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
           </article>
         ))}
       </div>
+
+      {/* Camera overlay */}
+      {showCamera && (
+        <CameraOverlay
+          onCapture={(dataUrl) => {
+            setShowCamera(false);
+            handleCapture(dataUrl);
+          }}
+          onClose={() => setShowCamera(false)}
+        />
+      )}
+
+      {/* Uploading indicator */}
+      {uploading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3 rounded-3xl bg-surface px-8 py-6 shadow-glow">
+            <div className="h-10 w-10 rounded-full border-4 border-[var(--neon)]/30 border-t-[var(--neon)] animate-spin" />
+            <p className="text-sm font-medium text-muted-foreground">Comprimiendo y subiendo foto…</p>
+          </div>
+        </div>
+      )}
 
       <button
         onClick={capture}
