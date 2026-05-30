@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Brain, Coins, Send, TrendingUp, Users, Wifi } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useWebRTC, type P2PMessage } from "@/hooks/useWebRTC";
-import { setBroadcast } from "@/hooks/useBroadcast";
 
 interface Msg {
   id: string;
@@ -85,13 +84,6 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       if (p.hot) triggerHype();
     } else if (msg.type === "hype") {
       triggerHype();
-    } else if (msg.type === "joined") {
-      const p = msg.payload as { name: string };
-      setMsgs((prev) =>
-        prev.some((x) => x.id === `joined-${msg.from}`)
-          ? prev
-          : [...prev, { id: `joined-${msg.from}`, user: "", text: `${p.name} se unió a la zona`, mine: false }],
-      );
     }
   }, []);
 
@@ -102,14 +94,6 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
     enabled: !isDemoEvent,
     onMessage: handleP2P,
   });
-
-  // Register broadcast globally so App can send join notifications
-  useEffect(() => {
-    setBroadcast(broadcast);
-    return () => {
-      setBroadcast(null);
-    };
-  }, [broadcast]);
 
   useEffect(() => {
     if (isDemoEvent) {
@@ -135,7 +119,7 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
           data.map((m) => ({
             id: m.id,
             user: m.usuario_nombre ?? "@anon",
-            text: m.texto,
+            text: m.texto?.startsWith("PHOTO:") ? "[Foto]" : m.texto,
             hot: m.hot,
             mine: m.usuario_id === usuarioId,
             created_at: m.created_at,
@@ -165,7 +149,7 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
           setMsgs((prev) =>
             prev.some((x) => x.id === m.id)
               ? prev
-              : [...prev, { id: m.id, user: m.usuario_nombre ?? "@anon", text: m.texto, hot: m.hot, mine: m.usuario_id === usuarioId, created_at: m.created_at }],
+              : [...prev, { id: m.id, user: m.usuario_nombre ?? "@anon", text: m.texto?.startsWith("PHOTO:") ? "[Foto]" : m.texto, hot: m.hot, mine: m.usuario_id === usuarioId, created_at: m.created_at }],
           );
           setActivity((a) => a + 1);
           if (m.hot && m.usuario_id !== usuarioId) triggerHype();
@@ -329,37 +313,25 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       </section>
 
       <section className="px-4 pt-4 space-y-2">
-        {msgs.map((m) => {
-          const isSystem = !m.user && m.text.includes("se unió");
-          if (isSystem) {
-            return (
-              <div key={m.id} className="flex justify-center">
-                <div className="rounded-full bg-surface-2 px-4 py-1 text-[11px] text-muted-foreground animate-slide-up">
-                  <span className="text-[var(--neon-2)]">⚡</span> {m.text}
-                </div>
-              </div>
-            );
-          }
-          return (
-            <div key={m.id} className={`flex ${m.mine ? "justify-end" : "justify-start"}`}>
-              <div
-                className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm animate-slide-up ${
-                  m.mine
-                    ? "bg-[var(--neon)] text-background"
-                    : m.hot
-                    ? "neon-border bg-surface"
-                    : "bg-surface border border-border"
-                }`}
-              >
-                {!m.mine && (
-                  <p className="mb-0.5 text-[10px] font-bold text-muted-foreground">{m.user}</p>
-                )}
-                <p className="leading-snug">{m.text}</p>
-                {m.hot && <p className="mt-1 text-[10px] neon-text">🔥 Termómetro al máximo</p>}
-              </div>
+        {msgs.map((m) => (
+          <div key={m.id} className={`flex ${m.mine ? "justify-end" : "justify-start"}`}>
+            <div
+              className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm animate-slide-up ${
+                m.mine
+                  ? "bg-[var(--neon)] text-background"
+                  : m.hot
+                  ? "neon-border bg-surface"
+                  : "bg-surface border border-border"
+              }`}
+            >
+              {!m.mine && (
+                <p className="mb-0.5 text-[10px] font-bold text-muted-foreground">{m.user}</p>
+              )}
+              <p className="leading-snug">{m.text}</p>
+              {m.hot && <p className="mt-1 text-[10px] neon-text">🔥 Termómetro al máximo</p>}
             </div>
-          );
-        })}
+          </div>
+        ))}
         <div ref={endRef} />
       </section>
 
