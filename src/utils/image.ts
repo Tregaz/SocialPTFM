@@ -5,20 +5,27 @@ export function compressToLimit(dataUrl: string, maxChars: number): Promise<stri
       let quality = 0.7;
       let width = img.width;
       let height = img.height;
-      const maxDim = 400;
+      const maxW = 300;
+      const maxH = 400;
 
       const tryCompress = () => {
         let w = width;
         let h = height;
-        if (w > maxDim) {
-          const ratio = maxDim / w;
-          w = maxDim;
+
+        // First resize to fit within 300x400 bounds while maintaining aspect ratio
+        if (w > maxW || h > maxH) {
+          const ratioW = maxW / w;
+          const ratioH = maxH / h;
+          const ratio = Math.min(ratioW, ratioH);
+          w = Math.round(w * ratio);
           h = Math.round(h * ratio);
         }
-        if (h > maxDim) {
-          const ratio = maxDim / h;
-          h = maxDim;
-          w = Math.round(w * ratio);
+
+        // Ensure portrait orientation (if landscape, swap dimensions)
+        if (w > h) {
+          // If the image is wider than tall, force portrait by cropping
+          // But for camera captures, we crop in CameraOverlay so just resize
+          // and maintain the aspect ratio as-is (portrait is forced in CameraOverlay)
         }
 
         const canvas = document.createElement("canvas");

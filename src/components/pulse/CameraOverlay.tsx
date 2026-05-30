@@ -102,12 +102,12 @@ export function CameraOverlay({ onCapture, onClose }: Props) {
     
     if (vw === 0 || vh === 0) return;
 
-    // Target 9:16
-    const targetRatio = 9 / 16;
+    // Target 3:4 (300x400 portrait)
+    const targetRatio = 3 / 4;
     let sw, sh, sx, sy;
 
     if (vw / vh > targetRatio) {
-      // Video is wider than target (e.g. horizontal)
+      // Video is wider than target
       sh = vh;
       sw = vh * targetRatio;
       sx = (vw - sw) / 2;
@@ -120,9 +120,9 @@ export function CameraOverlay({ onCapture, onClose }: Props) {
       sy = (vh - sh) / 2;
     }
 
-    // High quality vertical capture
-    canvas.width = 720;
-    canvas.height = 1280;
+    // Capture at exactly 300x400
+    canvas.width = 300;
+    canvas.height = 400;
     const ctx = canvas.getContext("2d", { alpha: false })!;
 
     // Background color for safety
@@ -136,7 +136,7 @@ export function CameraOverlay({ onCapture, onClose }: Props) {
     }
 
     try {
-      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 720, 1280);
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 300, 400);
       const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
       onCapture(dataUrl);
 

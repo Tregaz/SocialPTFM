@@ -7,9 +7,18 @@ interface Msg {
   id: string;
   user: string;
   text: string;
+  isPhoto?: boolean;
   mine?: boolean;
   hot?: boolean;
   created_at?: string;
+}
+
+function parseText(text: string | null | undefined): { text: string; isPhoto: boolean } {
+  if (!text) return { text: "", isPhoto: false };
+  if (text.startsWith("PHOTO:")) {
+    return { text: text.slice(6), isPhoto: true };
+  }
+  return { text, isPhoto: false };
 }
 
 const HOT_WORDS = ["gol", "drop", "brutal", "temazo", "golazo", "bass"];
@@ -76,10 +85,11 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
     setActivity((a) => a + 1);
     if (msg.type === "chat") {
       const p = msg.payload as { id: string; user: string; text: string; hot: boolean };
+      const parsed = parseText(p.text);
       setMsgs((prev) =>
         prev.some((x) => x.id === p.id)
           ? prev
-          : [...prev, { id: p.id, user: p.user, text: p.text, hot: p.hot }],
+          : [...prev, { id: p.id, user: p.user, text: parsed.text, isPhoto: parsed.isPhoto, hot: p.hot }],
       );
       if (p.hot) triggerHype();
     } else if (msg.type === "hype") {
@@ -116,14 +126,18 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
         .limit(50);
       if (!cancelled && data) {
         setMsgs(
-          data.map((m) => ({
-            id: m.id,
-            user: m.usuario_nombre ?? "@anon",
-            text: m.texto,
-            hot: m.hot,
-            mine: m.usuario_id === usuarioId,
-            created_at: m.created_at,
-          })),
+          data.map((m) => {
+            const parsed = parseText(m.texto);
+            return {
+              id: m.id,
+              user: m.usuario_nombre ?? "@anon",
+              text: parsed.text,
+              isPhoto: parsed.isPhoto,
+              hot: m.hot,
+              mine: m.usuario_id === usuarioId,
+              created_at: m.created_at,
+            };
+          }),
         );
       }
 
@@ -146,10 +160,11 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
             texto: string; hot: boolean; zona_recinto: string; created_at: string;
           };
           if (m.zona_recinto !== zone) return;
+          const parsed = parseText(m.texto);
           setMsgs((prev) =>
             prev.some((x) => x.id === m.id)
               ? prev
-              : [...prev, { id: m.id, user: m.usuario_nombre ?? "@anon", text: m.texto, hot: m.hot, mine: m.usuario_id === usuarioId, created_at: m.created_at }],
+              : [...prev, { id: m.id, user: m.usuario_nombre ?? "@anon", text: parsed.text, isPhoto: parsed.isPhoto, hot: m.hot, mine: m.usuario_id === usuarioId, created_at: m.created_at }],
           );
           setActivity((a) => a + 1);
           if (m.hot && m.usuario_id !== usuarioId) triggerHype();
@@ -327,7 +342,16 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
               {!m.mine && (
                 <p className="mb-0.5 text-[10px] font-bold text-muted-foreground">{m.user}</p>
               )}
-              <p className="leading-snug">{m.text}</p>
+              {m.isPhoto ? (
+                <img
+                  src={m.text}
+                  alt="Foto compartida"
+                  className="max-w-full rounded-xl border border-border"
+                  style={{ maxHeight: "300px", objectFit: "cover" }}
+                />
+              ) : (
+                <p className="leading-snug">{m.text}</p>
+              )}
               {m.hot && <p className="mt-1 text-[10px] neon-text">🔥 Termómetro al máximo</p>}
             </div>
           </div>
