@@ -27,6 +27,16 @@ function PulseApp() {
   const logoTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { nearbyEvents, activeEvent, status: geoStatus, position } = useGeofence();
+  const [nsfwModel, setNsfwModel] = useState<any>(null);
+
+  useEffect(() => {
+    if (window.nsfwjs) {
+      window.nsfwjs.load().then((model) => {
+        console.log("[NSFW] Model loaded");
+        setNsfwModel(model);
+      });
+    }
+  }, []);
 
   // ── Auto-activate Modo Evento when GPS puts user inside an event radius ───
   useEffect(() => {
@@ -194,7 +204,11 @@ function PulseApp() {
           />
         )}
         {tab === "feed" && selection && (
-          <FeedView zone={selection.zone} eventId={selection.event.id} />
+          <FeedView
+            zone={selection.zone}
+            eventId={selection.event.id}
+            nsfwModel={nsfwModel}
+          />
         )}
         {tab === "chat" && selection && (
           <ChatView
