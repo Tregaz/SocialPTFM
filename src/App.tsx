@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, LogOut, MapPin } from "lucide-react";
+import { Bot, LogOut, MapPin, QrCode } from "lucide-react";
 import { startBotSimulator } from "@/utils/botSimulator";
-import { startIntelligentBots } from "@/utils/intelligentBots";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BottomNav, type Tab } from "@/components/pulse/BottomNav";
 import { RadarView, type PulseEvent } from "@/components/pulse/RadarView";
@@ -10,9 +9,18 @@ import { ChatView } from "@/components/pulse/ChatView";
 import { AdminView } from "@/components/pulse/AdminView";
 import { HotAlert } from "@/components/pulse/HotAlert";
 import { LoginGate } from "@/components/pulse/LoginGate";
+import { ShareQR } from "@/components/pulse/ShareQR";
 import { useAuth } from "@/hooks/useAuth";
-import { useGeofence } from "@/hooks/useGeofence";
+import { useGeofence, toPulseEvent } from "@/hooks/useGeofence";
+import { getBroadcast } from "@/hooks/useBroadcast";
 import { supabase } from "@/integrations/supabase/client";
+import { getPeerId } from "@/lib/pulse/session";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const queryClient = new QueryClient();
 
@@ -23,17 +31,12 @@ function PulseApp() {
   const [modoBanner, setModoBanner] = useState<string | null>(null);
   const [simActive, setSimActive] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [showQr, setShowQr] = useState(false);
   const autoActivatedId = useRef<string | null>(null);
   const logoTapCount = useRef(0);
   const logoTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { nearbyEvents, activeEvent, status: geoStatus, position } = useGeofence();
-
-  // ── Background maintenance bots (Purge & News) ───────────────────────────
-  useEffect(() => {
-    const stop = startIntelligentBots();
-    return stop;
-  }, []);
 
   // ── Auto-activate Modo Evento when GPS puts user inside an event radius ───
   useEffect(() => {
@@ -50,6 +53,71 @@ function PulseApp() {
     const t = setTimeout(() => setModoBanner(null), 4000);
     return () => clearTimeout(t);
   }, [activeEvent, selection]);
+
+  // ── QR / URL auto-pairing on launch ────────────────────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const invitedBy = params.get("invitedBy");
+    const eventId = params.get("eventId");
+    const zona = params.get("zona");
+
+    if (!eventId || !zona) return;
+
+    // Avoid re-triggering if already in this event/zone
+    if (selection?.event.id === eventId && selection?.zone === zona) return;
+    if (autoActivatedId.current === eventId) return;
+
+    let cancelled = false;
+
+    (async () => {
+      const { data } = await supabase
+        .from("eventos")
+        .select("id, nombre, venue, tema, latitud, longitud, radio_metros, zonas")
+        .eq("id", eventId)
+        .single();
+
+      if (cancelled || !data) return;
+
+      const event = toPulseEvent(data);
+      autoActivatedId.current = event.id;
+
+      setSelection({ event, zone: zona });
+      setTab("chat");
+      setModoBanner(
+        invitedBy
+          ? `👋 Invitado por @${invitedBy} · ${event.name.split(" · ")[0]}`
+          : `🎯 QR vinculado · ${event.name.split(" · ")[0]}`,
+      );
+      const t = setTimeout(() => setModoBanner(null), 5000);
+      // register in nodos_activos
+      if (!event.id.startsWith("demo-")) {
+        await supabase.from("nodos_activos").insert({
+          usuario_id: user?.id,
+          evento_id: event.id,
+          peer_id_webrtc: getPeerId(),
+          zona_recinto: zona,
+        });
+      }
+
+      // Broadcast "joined" to mesh (the broadcast fn becomes available after ChatView mounts)
+      const attemptBroadcast = () => {
+        const b = getBroadcast();
+        if (b) {
+          b("joined", { name: displayName ?? "raver" });
+        } else {
+          // Retry after chat tab mounts with its WebRTC
+          setTimeout(attemptBroadcast, 500);
+        }
+      };
+      setTimeout(attemptBroadcast, 1000);
+
+      return () => clearTimeout(t);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSelect = (event: PulseEvent, zone: string) => {
     setSelection({ event, zone });
@@ -165,6 +233,15 @@ function PulseApp() {
                 {selection.zone}
               </span>
             )}
+            {selection && (
+              <button
+                onClick={() => setShowQr(true)}
+                className="grid h-8 w-8 place-items-center rounded-full bg-surface-2 text-muted-foreground hover:text-[var(--neon)]"
+                aria-label="Compartir QR"
+              >
+                <QrCode className="h-4 w-4" />
+              </button>
+            )}
             <button
               onClick={() => setSimActive((v) => !v)}
               title={simActive ? "Simulación ON — click para apagar" : "Simulación OFF — click para encender"}
@@ -187,6 +264,25 @@ function PulseApp() {
           </div>
         </div>
       </header>
+
+      {/* QR Share Dialog */}
+      {selection && (
+        <Dialog open={showQr} onOpenChange={setShowQr}>
+          <DialogContent className="neon-border max-w-[90vw] sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="neon-text text-center text-sm uppercase tracking-[0.2em]">
+                Compartir QR
+              </DialogTitle>
+            </DialogHeader>
+            <ShareQR
+              userId={usuarioId}
+              eventId={selection.event.id}
+              zona={selection.zone}
+              displayName={usuarioNombre}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
 
       <main>
         {tab === "radar" && (

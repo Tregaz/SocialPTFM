@@ -122,7 +122,7 @@ export function useWebRTC({ eventId, zone, userId, enabled = true, onMessage }: 
   useEffect(() => {
     if (!enabled || isDemo) return;
     const channel = supabase
-      .channel(`pulse-event-${eventId}-rtc`)
+      .channel(`webrtc-discovery-${eventId}-${zone}`)
       .on(
         "postgres_changes",
         {

@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Brain, Coins, Send, TrendingUp, Users, Wifi } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useWebRTC, type P2PMessage } from "@/hooks/useWebRTC";
-import { useToast } from "@/hooks/use-toast";
-import { cleanText } from "@/utils/filter";
+import { setBroadcast } from "@/hooks/useBroadcast";
 
 interface Msg {
   id: string;
@@ -86,6 +85,13 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       if (p.hot) triggerHype();
     } else if (msg.type === "hype") {
       triggerHype();
+    } else if (msg.type === "joined") {
+      const p = msg.payload as { name: string };
+      setMsgs((prev) =>
+        prev.some((x) => x.id === `joined-${msg.from}`)
+          ? prev
+          : [...prev, { id: `joined-${msg.from}`, user: "", text: `${p.name} se unió a la zona`, mine: false }],
+      );
     }
   }, []);
 
@@ -97,8 +103,13 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
     onMessage: handleP2P,
   });
 
-  const { toast } = useToast();
-  const [msgHistory, setMsgHistory] = useState<number[]>([]);
+  // Register broadcast globally so App can send join notifications
+  useEffect(() => {
+    setBroadcast(broadcast);
+    return () => {
+      setBroadcast(null);
+    };
+  }, [broadcast]);
 
   useEffect(() => {
     if (isDemoEvent) {
@@ -141,7 +152,7 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
     })();
 
     const channel = supabase
-      .channel(`pulse-event-${eventId}-chat`)
+      .channel(`zona-${eventId}-${zone}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "mensajes", filter: `evento_id=eq.${eventId}` },
@@ -186,38 +197,23 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
   const send = async () => {
     const text = input.trim();
     if (!text) return;
-
-    // Rate limiting: max 2 messages per 30 seconds
-    const now = Date.now();
-    const recentMsgs = msgHistory.filter((ts) => now - ts < 30000);
-    if (recentMsgs.length >= 2) {
-      toast({
-        title: "Wait",
-        description: "Estás enviando mensajes muy rápido. Espera un momento.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setMsgHistory([...recentMsgs, now]);
-
-    const cleanedText = cleanText(text);
-    const isHot = HOT_WORDS.some((w) => cleanedText.toLowerCase().includes(w));
+    const isHot = HOT_WORDS.some((w) => text.toLowerCase().includes(w));
     setInput("");
 
     const localId = crypto.randomUUID();
     if (isDemoEvent) {
-      setMsgs((m) => [...m, { id: localId, user: "@tú", text: cleanedText, mine: true, hot: isHot }]);
+      setMsgs((m) => [...m, { id: localId, user: "@tú", text, mine: true, hot: isHot }]);
     } else {
       const { error } = await supabase.from("mensajes").insert({
         evento_id: eventId,
         zona_recinto: zone,
         usuario_id: usuarioId,
         usuario_nombre: usuarioNombre,
-        texto: cleanedText,
+        texto: text,
         hot: isHot,
       });
       if (error) console.error("Mensaje no enviado", error);
-      broadcast("chat", { id: localId, user: usuarioNombre, text: cleanedText, hot: isHot });
+      broadcast("chat", { id: localId, user: usuarioNombre, text, hot: isHot });
       if (isHot) broadcast("hype", { ts: Date.now() });
     }
 
@@ -333,25 +329,37 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       </section>
 
       <section className="px-4 pt-4 space-y-2">
-        {msgs.map((m) => (
-          <div key={m.id} className={`flex ${m.mine ? "justify-end" : "justify-start"}`}>
-            <div
-              className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm animate-slide-up ${
-                m.mine
-                  ? "bg-[var(--neon)] text-background"
-                  : m.hot
-                  ? "neon-border bg-surface"
-                  : "bg-surface border border-border"
-              }`}
-            >
-              {!m.mine && (
-                <p className="mb-0.5 text-[10px] font-bold text-muted-foreground">{m.user}</p>
-              )}
-              <p className="leading-snug">{m.text}</p>
-              {m.hot && <p className="mt-1 text-[10px] neon-text">🔥 Termómetro al máximo</p>}
+        {msgs.map((m) => {
+          const isSystem = !m.user && m.text.includes("se unió");
+          if (isSystem) {
+            return (
+              <div key={m.id} className="flex justify-center">
+                <div className="rounded-full bg-surface-2 px-4 py-1 text-[11px] text-muted-foreground animate-slide-up">
+                  <span className="text-[var(--neon-2)]">⚡</span> {m.text}
+                </div>
+              </div>
+            );
+          }
+          return (
+            <div key={m.id} className={`flex ${m.mine ? "justify-end" : "justify-start"}`}>
+              <div
+                className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm animate-slide-up ${
+                  m.mine
+                    ? "bg-[var(--neon)] text-background"
+                    : m.hot
+                    ? "neon-border bg-surface"
+                    : "bg-surface border border-border"
+                }`}
+              >
+                {!m.mine && (
+                  <p className="mb-0.5 text-[10px] font-bold text-muted-foreground">{m.user}</p>
+                )}
+                <p className="leading-snug">{m.text}</p>
+                {m.hot && <p className="mt-1 text-[10px] neon-text">🔥 Termómetro al máximo</p>}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         <div ref={endRef} />
       </section>
 
