@@ -12,3 +12,29 @@ export function cleanText(text: string): string {
   });
   return cleaned;
 }
+
+export interface ParsedMessage {
+  content: string;
+  reportCount: number;
+  isHidden: boolean;
+}
+
+export function parseMessage(text: string): ParsedMessage {
+  if (!text) return { content: "", reportCount: 0, isHidden: false };
+  
+  if (text.startsWith("HIDDEN:")) {
+    return { content: text.replace("HIDDEN:", ""), reportCount: 3, isHidden: true };
+  }
+  
+  const reportMatch = text.match(/^REPORT:(\d)\|/);
+  if (reportMatch) {
+    const reportCount = parseInt(reportMatch[1], 10);
+    return {
+      content: text.replace(/^REPORT:\d\|/, ""),
+      reportCount,
+      isHidden: reportCount >= 3,
+    };
+  }
+  
+  return { content: text, reportCount: 0, isHidden: false };
+}
