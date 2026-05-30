@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, LogOut, MapPin, QrCode } from "lucide-react";
+import { Bot, LogOut, MapPin } from "lucide-react";
 import { startBotSimulator } from "@/utils/botSimulator";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BottomNav, type Tab } from "@/components/pulse/BottomNav";
@@ -9,8 +9,6 @@ import { ChatView } from "@/components/pulse/ChatView";
 import { AdminView } from "@/components/pulse/AdminView";
 import { HotAlert } from "@/components/pulse/HotAlert";
 import { LoginGate } from "@/components/pulse/LoginGate";
-import { ShareQR } from "@/components/pulse/ShareQR";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/useAuth";
 import { useGeofence } from "@/hooks/useGeofence";
 import { supabase } from "@/integrations/supabase/client";
@@ -24,7 +22,6 @@ function PulseApp() {
   const [modoBanner, setModoBanner] = useState<string | null>(null);
   const [simActive, setSimActive] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [showQR, setShowQR] = useState(false);
   const autoActivatedId = useRef<string | null>(null);
   const logoTapCount = useRef(0);
   const logoTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -46,18 +43,6 @@ function PulseApp() {
     const t = setTimeout(() => setModoBanner(null), 4000);
     return () => clearTimeout(t);
   }, [activeEvent, selection]);
-
-  // ── Auto-pairing from URL params on launch ──────────────────────────────
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const invitedBy = params.get("invitedBy");
-    const eventId = params.get("eventId");
-    const zona = params.get("zona");
-    if (invitedBy && eventId && zona) {
-      setSelection({ event: { id: eventId, name: "Evento", venue: "", theme: "festival", liveUsers: 0, zones: [zona], cover: "" }, zone: zona });
-      setTab("feed");
-    }
-  }, []);
 
   const handleSelect = (event: PulseEvent, zone: string) => {
     setSelection({ event, zone });
@@ -185,15 +170,6 @@ function PulseApp() {
               <Bot className="h-3 w-3" />
               {simActive ? "SIM ON" : "SIM"}
             </button>
-            {selection && (
-              <button
-                onClick={() => setShowQR(true)}
-                className="grid h-8 w-8 place-items-center rounded-full bg-surface-2 text-muted-foreground"
-                aria-label="Compartir QR"
-              >
-                <QrCode className="h-4 w-4" />
-              </button>
-            )}
             <button
               onClick={() => supabase.auth.signOut()}
               className="grid h-8 w-8 place-items-center rounded-full bg-surface-2 text-muted-foreground"
@@ -218,12 +194,7 @@ function PulseApp() {
           />
         )}
         {tab === "feed" && selection && (
-          <FeedView
-            zone={selection.zone}
-            eventId={selection.event.id}
-            usuarioId={usuarioId}
-            usuarioNombre={usuarioNombre}
-          />
+          <FeedView zone={selection.zone} eventId={selection.event.id} />
         )}
         {tab === "chat" && selection && (
           <ChatView
@@ -240,20 +211,6 @@ function PulseApp() {
           />
         )}
       </main>
-
-      {/* Share QR Modal */}
-      <Dialog open={showQR} onOpenChange={setShowQR}>
-        <DialogContent className="w-[90%] max-w-sm rounded-3xl border border-border bg-surface p-6">
-          {selection && (
-            <ShareQR
-              userId={usuarioId}
-              eventId={selection.event.id}
-              zona={selection.zone}
-              displayName={usuarioNombre}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
 
       <BottomNav
         active={tab}
