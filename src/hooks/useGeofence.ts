@@ -30,8 +30,10 @@ export interface GeofenceState {
 /** Mínimo de metros que el usuario debe moverse para disparar una nueva consulta a Supabase */
 const MOVE_THRESHOLD_METERS = 50;
 
-/** Transform a raw eventos DB row into a PulseEvent */
-export function toPulseEvent(row: {
+/** Tiempo mínimo entre consultas (ms), aunque el usuario se haya movido suficiente */
+const MIN_QUERY_INTERVAL_MS = 15_000;
+
+function toPulseEvent(row: {
   id: string;
   nombre: string;
   venue: string | null;
@@ -57,9 +59,6 @@ export function toPulseEvent(row: {
     radio: row.radio_metros,
   };
 }
-
-/** Tiempo mínimo entre consultas (ms), aunque el usuario se haya movido suficiente */
-const MIN_QUERY_INTERVAL_MS = 15_000;
 
 export function useGeofence(): GeofenceState {
   const [position, setPosition] = useState<GeolocationCoordinates | null>(null);
