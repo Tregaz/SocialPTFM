@@ -77,10 +77,20 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
     setActivity((a) => a + 1);
     if (msg.type === "chat") {
       const p = msg.payload as { id: string; user: string; text: string; hot: boolean };
+      const isPhoto = p.text.startsWith("PHOTO:");
       setMsgs((prev) =>
         prev.some((x) => x.id === p.id)
           ? prev
-          : [...prev, { id: p.id, user: p.user, text: p.text, hot: p.hot }],
+          : [
+              ...prev,
+              {
+                id: p.id,
+                user: p.user,
+                text: isPhoto ? "" : p.text,
+                photoUrl: isPhoto ? p.text.replace("PHOTO:", "") : undefined,
+                hot: p.hot,
+              },
+            ],
       );
       if (p.hot) triggerHype();
     } else if (msg.type === "hype") {
@@ -118,13 +128,12 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
       if (!cancelled && data) {
         setMsgs(
           data.map((m) => {
-            const text = m.texto;
-            const isPhoto = text.startsWith("PHOTO:");
+            const isPhoto = m.texto?.startsWith("PHOTO:");
             return {
               id: m.id,
               user: m.usuario_nombre ?? "@anon",
-              text: isPhoto ? "" : text,
-              photoUrl: isPhoto ? text.replace("PHOTO:", "") : undefined,
+              text: isPhoto ? "" : m.texto,
+              photoUrl: isPhoto ? m.texto.replace("PHOTO:", "") : undefined,
               hot: m.hot,
               mine: m.usuario_id === usuarioId,
               created_at: m.created_at,
@@ -152,12 +161,22 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
             texto: string; hot: boolean; zona_recinto: string; created_at: string;
           };
           if (m.zona_recinto !== zone) return;
-          const text = m.texto;
-          const isPhoto = text.startsWith("PHOTO:");
+          const isPhoto = m.texto?.startsWith("PHOTO:");
           setMsgs((prev) =>
             prev.some((x) => x.id === m.id)
               ? prev
-              : [...prev, { id: m.id, user: m.usuario_nombre ?? "@anon", text: isPhoto ? "" : text, photoUrl: isPhoto ? text.replace("PHOTO:", "") : undefined, hot: m.hot, mine: m.usuario_id === usuarioId, created_at: m.created_at }],
+              : [
+                  ...prev,
+                  {
+                    id: m.id,
+                    user: m.usuario_nombre ?? "@anon",
+                    text: isPhoto ? "" : m.texto,
+                    photoUrl: isPhoto ? m.texto.replace("PHOTO:", "") : undefined,
+                    hot: m.hot,
+                    mine: m.usuario_id === usuarioId,
+                    created_at: m.created_at,
+                  },
+                ],
           );
           setActivity((a) => a + 1);
           if (m.hot && m.usuario_id !== usuarioId) triggerHype();
@@ -194,7 +213,18 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
 
     const localId = crypto.randomUUID();
     if (isDemoEvent) {
-      setMsgs((m) => [...m, { id: localId, user: "@tú", text, mine: true, hot: isHot }]);
+      const isPhoto = text.startsWith("PHOTO:");
+      setMsgs((m) => [
+        ...m,
+        {
+          id: localId,
+          user: "@tú",
+          text: isPhoto ? "" : text,
+          photoUrl: isPhoto ? text.replace("PHOTO:", "") : undefined,
+          mine: true,
+          hot: isHot,
+        },
+      ]);
     } else {
       const { error } = await supabase.from("mensajes").insert({
         evento_id: eventId,
@@ -335,15 +365,13 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
               {!m.mine && (
                 <p className="mb-0.5 text-[10px] font-bold text-muted-foreground">{m.user}</p>
               )}
-              {m.photoUrl ? (
-                <img
-                  src={m.photoUrl}
-                  alt="Foto"
-                  className="max-h-60 w-full object-cover rounded-xl -mx-1 shadow-glow"
-                  loading="lazy"
+              {m.text && <p className="leading-snug">{m.text}</p>}
+              {m.photoUrl && (
+                <img 
+                  src={m.photoUrl} 
+                  alt="Chat photo" 
+                  className="mt-2 rounded-xl w-full object-cover max-h-60" 
                 />
-              ) : (
-                <p className="leading-snug">{m.text}</p>
               )}
               {m.hot && <p className="mt-1 text-[10px] neon-text">🔥 Termómetro al máximo</p>}
             </div>

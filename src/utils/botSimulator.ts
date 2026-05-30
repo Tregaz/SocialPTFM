@@ -34,6 +34,13 @@ const MESSAGES = [
 
 const HOT_KEYWORDS = ["colapso", "lleno", "brutal", "temazo", "drop", "bengala"];
 
+const PHOTO_MESSAGES = [
+  "PHOTO:https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?auto=format&fit=crop&q=80&w=300&h=400",
+  "PHOTO:https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&q=80&w=300&h=400",
+  "PHOTO:https://images.unsplash.com/photo-1459749411177-042180ce673c?auto=format&fit=crop&q=80&w=300&h=400",
+  "PHOTO:https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?auto=format&fit=crop&q=80&w=300&h=400",
+];
+
 function pickRandom<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -61,7 +68,8 @@ export function startBotSimulator({ eventId }: BotSimulatorOptions): () => void 
     const id = crypto.randomUUID();
     const author = pickRandom(BOT_NAMES);
     const zone = pickRandom(ZONES);
-    const text = pickRandom(MESSAGES);
+    const isPhotoMsg = Math.random() < 0.3;
+    const text = isPhotoMsg ? pickRandom(PHOTO_MESSAGES) : pickRandom(MESSAGES);
     const lower = text.toLowerCase();
     const hot = HOT_KEYWORDS.some((kw) => lower.includes(kw));
 
