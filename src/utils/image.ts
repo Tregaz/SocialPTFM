@@ -1,3 +1,13 @@
+export function checkContentSafety(base64Data: string): boolean {
+  // block obviously bad uploads (e.g., size too small, purely black/white frames, or just a placeholder for now)
+  if (!base64Data || base64Data.length < 1000) return false;
+  
+  // Basic check for purely black or white frames: 
+  // In a real app we would check the canvas pixels, but here we can at least check length 
+  // or look for patterns in base64 if we want, but length is the most basic.
+  return true;
+}
+
 export function compressToLimit(dataUrl: string, maxChars: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();
