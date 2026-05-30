@@ -194,12 +194,7 @@ function PulseApp() {
           />
         )}
         {tab === "feed" && selection && (
-          <FeedView 
-            zone={selection.zone} 
-            eventId={selection.event.id} 
-            usuarioId={usuarioId}
-            usuarioNombre={usuarioNombre}
-          />
+          <FeedView zone={selection.zone} eventId={selection.event.id} />
         )}
         {tab === "chat" && selection && (
           <ChatView

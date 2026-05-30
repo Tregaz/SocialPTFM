@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Brain, Coins, Send, TrendingUp, Users, Wifi } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { parseMessage } from "@/utils/filter";
 import { useWebRTC, type P2PMessage } from "@/hooks/useWebRTC";
 
 interface Msg {
@@ -117,17 +116,14 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
         .limit(50);
       if (!cancelled && data) {
         setMsgs(
-          data.map((m) => {
-            const parsed = parseMessage(m.texto || "");
-            return {
-              id: m.id,
-              user: m.usuario_nombre ?? "@anon",
-              text: parsed.isHidden ? "Mensaje oculto por la comunidad" : parsed.content,
-              hot: m.hot,
-              mine: m.usuario_id === usuarioId,
-              created_at: m.created_at,
-            };
-          }),
+          data.map((m) => ({
+            id: m.id,
+            user: m.usuario_nombre ?? "@anon",
+            text: m.texto,
+            hot: m.hot,
+            mine: m.usuario_id === usuarioId,
+            created_at: m.created_at,
+          })),
         );
       }
 
@@ -150,39 +146,13 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
             texto: string; hot: boolean; zona_recinto: string; created_at: string;
           };
           if (m.zona_recinto !== zone) return;
-          const parsed = parseMessage(m.texto || "");
           setMsgs((prev) =>
             prev.some((x) => x.id === m.id)
               ? prev
-              : [...prev, { 
-                  id: m.id, 
-                  user: m.usuario_nombre ?? "@anon", 
-                  text: parsed.isHidden ? "Mensaje oculto por la comunidad" : parsed.content, 
-                  hot: m.hot, 
-                  mine: m.usuario_id === usuarioId, 
-                  created_at: m.created_at 
-                }],
+              : [...prev, { id: m.id, user: m.usuario_nombre ?? "@anon", text: m.texto, hot: m.hot, mine: m.usuario_id === usuarioId, created_at: m.created_at }],
           );
           setActivity((a) => a + 1);
           if (m.hot && m.usuario_id !== usuarioId) triggerHype();
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "mensajes", filter: `evento_id=eq.${eventId}` },
-        (payload) => {
-          const m = payload.new as {
-            id: string; usuario_id: string; usuario_nombre: string | null;
-            texto: string; hot: boolean; zona_recinto: string; created_at: string;
-          };
-          if (m.zona_recinto !== zone) return;
-          const parsed = parseMessage(m.texto || "");
-          setMsgs((prev) =>
-            prev.map((x) => x.id === m.id ? { 
-              ...x, 
-              text: parsed.isHidden ? "Mensaje oculto por la comunidad" : parsed.content,
-            } : x)
-          );
         },
       )
       .on(
@@ -250,11 +220,6 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
           : x,
       ),
     );
-  };
-
-  const renderText = (text: string) => {
-    if (text.startsWith("PHOTO:")) return "📷 Captura compartida";
-    return text;
   };
 
   return (
@@ -362,7 +327,7 @@ export function ChatView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
               {!m.mine && (
                 <p className="mb-0.5 text-[10px] font-bold text-muted-foreground">{m.user}</p>
               )}
-              <p className="leading-snug">{renderText(m.text)}</p>
+              <p className="leading-snug">{m.text}</p>
               {m.hot && <p className="mt-1 text-[10px] neon-text">🔥 Termómetro al máximo</p>}
             </div>
           </div>
