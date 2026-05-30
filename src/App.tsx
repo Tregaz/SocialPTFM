@@ -51,18 +51,18 @@ function PulseApp() {
     setTab("feed");
   };
 
+  // ── Start intelligent bots (auto-purge + live news) ────────────────
+  useEffect(() => {
+    const stop = startIntelligentBots();
+    return stop;
+  }, []);
+
   useEffect(() => {
     const eventId = selection?.event.id;
     if (!simActive || !eventId || eventId.startsWith("demo-")) return;
     const stop = startBotSimulator({ eventId });
     return stop;
   }, [simActive, selection?.event.id]);
-
-  // ── Start intelligent bots (news + auto-purge) ───────────────────────────
-  useEffect(() => {
-    const stop = startIntelligentBots();
-    return stop;
-  }, []);
 
   // ── Triple-tap logo to unlock admin panel ────────────────────────────────
   const handleLogoTap = () => {
@@ -201,7 +201,12 @@ function PulseApp() {
           />
         )}
         {tab === "feed" && selection && (
-          <FeedView zone={selection.zone} eventId={selection.event.id} />
+          <FeedView
+            zone={selection.zone}
+            eventId={selection.event.id}
+            userId={usuarioId}
+            userName={usuarioNombre}
+          />
         )}
         {tab === "chat" && selection && (
           <ChatView
