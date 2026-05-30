@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { Camera, Flag, Flame, Wifi } from "lucide-react";
+import { Camera, Flag, Flame, Wifi, AlertTriangle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/useAuth";
-import { CameraOverlay } from "./CameraOverlay";
+import { parseMessage } from "@/utils/filter";
 import { checkContentSafety, compressToLimit } from "@/utils/image";
+import { toast } from "sonner";
 
 interface FeedItem {
   id: string;
@@ -14,8 +14,7 @@ interface FeedItem {
   likes: number;
   liked: boolean;
   reported: boolean;
-  hidden: boolean;
-  reportCount: number;
+  isHidden: boolean;
   ago: string;
 }
 
@@ -50,43 +49,34 @@ function dbRowToItem(row: {
   created_at?: string | null;
   hot?: boolean | null;
 }): FeedItem {
-  let texto = row.texto ?? "";
-  let hidden = false;
-  let reportCount = 0;
-
-  if (texto.startsWith("HIDDEN:")) {
-    hidden = true;
-    texto = texto.substring(7);
-  } else if (texto.startsWith("REPORT:")) {
-    const pipeIndex = texto.indexOf("|");
-    if (pipeIndex !== -1) {
-      reportCount = parseInt(texto.substring(7, pipeIndex), 10);
-      texto = texto.substring(pipeIndex + 1);
-    }
-  }
+  const parsed = parseMessage(row.texto ?? "");
+  const isPhoto = parsed.content.startsWith("PHOTO:");
+  const photoUrl = isPhoto ? parsed.content.replace("PHOTO:", "") : null;
 
   return {
     id: row.id,
     author: row.usuario_nombre ? `@${row.usuario_nombre}` : "@anon",
     peerId: row.peer_id ?? "peer:db",
-    gradient: gradientFor(row.id),
-    caption: texto,
+    gradient: photoUrl ? `url(${photoUrl})` : gradientFor(row.id),
+    caption: isPhoto ? "Captura en vivo" : parsed.content,
     likes: 0,
     liked: false,
-    reported: reportCount > 0,
-    hidden,
-    reportCount,
+    reported: parsed.reportCount > 0,
+    isHidden: parsed.isHidden,
     ago: row.created_at ? timeAgo(row.created_at) : "ahora",
   };
 }
 
+import { CameraOverlay } from "./CameraOverlay";
+
 interface Props {
   zone: string;
   eventId: string;
+  usuarioId?: string;
+  usuarioNombre?: string;
 }
 
-export function FeedView({ zone, eventId }: Props) {
-  const { user, displayName } = useAuth();
+export function FeedView({ zone, eventId, usuarioId, usuarioNombre }: Props) {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCamera, setShowCamera] = useState(false);
@@ -125,22 +115,27 @@ export function FeedView({ zone, eventId }: Props) {
       .on(
         "postgres_changes",
         {
-          event: "*",
+          event: "INSERT",
           schema: "public",
           table: "mensajes",
           filter: `evento_id=eq.${eventId}`,
         },
         (payload) => {
-          if (payload.eventType === "INSERT") {
-            const newItem = dbRowToItem(payload.new as Parameters<typeof dbRowToItem>[0]);
-            setItems((prev) => {
-              if (prev.some((x) => x.id === newItem.id)) return prev;
-              return [newItem, ...prev];
-            });
-          } else if (payload.eventType === "UPDATE") {
-            const updated = dbRowToItem(payload.new as Parameters<typeof dbRowToItem>[0]);
-            setItems((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
-          }
+          const newItem = dbRowToItem(payload.new as Parameters<typeof dbRowToItem>[0]);
+          setItems((prev) => [newItem, ...prev]);
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "mensajes",
+          filter: `evento_id=eq.${eventId}`,
+        },
+        (payload) => {
+          const updatedItem = dbRowToItem(payload.new as Parameters<typeof dbRowToItem>[0]);
+          setItems((prev) => prev.map((it) => it.id === updatedItem.id ? updatedItem : it));
         },
       )
       .subscribe();
@@ -153,25 +148,25 @@ export function FeedView({ zone, eventId }: Props) {
         { event: "bot_message" },
         (msg: { payload: { id: string; author: string; zone: string; text: string; hot: boolean; ts: string } }) => {
           const p = msg.payload;
-          setItems((prev) => {
-            if (prev.some((x) => x.id === p.id)) return prev;
-            return [
-              {
-                id: p.id,
-                author: `@${p.author}`,
-                peerId: `sim:${p.zone}`,
-                gradient: gradientFor(p.id),
-                caption: p.text,
-                likes: 0,
-                liked: false,
-                reported: false,
-                hidden: false,
-                reportCount: 0,
-                ago: "ahora",
-              },
-              ...prev,
-            ];
-          });
+          const parsed = parseMessage(p.text);
+          const isPhoto = parsed.content.startsWith("PHOTO:");
+          const photoUrl = isPhoto ? parsed.content.replace("PHOTO:", "") : null;
+
+          setItems((prev) => [
+            {
+              id: p.id,
+              author: `@${p.author}`,
+              peerId: `sim:${p.zone}`,
+              gradient: photoUrl ? `url(${photoUrl})` : gradientFor(p.id),
+              caption: isPhoto ? "Captura en vivo" : parsed.content,
+              likes: 0,
+              liked: false,
+              reported: parsed.reportCount > 0,
+              isHidden: parsed.isHidden,
+              ago: "ahora",
+            },
+            ...prev,
+          ]);
         },
       )
       .subscribe();
@@ -190,68 +185,85 @@ export function FeedView({ zone, eventId }: Props) {
       ),
     );
 
-  const report = async (item: FeedItem) => {
-    if (item.reported || item.hidden || isDemo) return;
+  const report = async (id: string) => {
+    // Optimistic UI
+    setItems((xs) => xs.map((x) => (x.id === id ? { ...x, reported: true } : x)));
 
-    // Local update
-    setItems((xs) =>
-      xs.map((x) =>
-        x.id === item.id ? { ...x, reported: true, reportCount: x.reportCount + 1 } : x,
-      ),
-    );
+    if (isDemo) return;
 
-    // DB update
-    const { data: current } = await supabase
-      .from("mensajes")
-      .select("texto")
-      .eq("id", item.id)
-      .single();
+    try {
+      const { data: msg } = await supabase
+        .from("mensajes")
+        .select("texto")
+        .eq("id", id)
+        .single();
 
-    if (current) {
-      let newTexto = current.texto;
-      let newCount = 1;
+      if (msg) {
+        const parsed = parseMessage(msg.texto || "");
+        const newCount = parsed.reportCount + 1;
+        let newTexto = msg.texto;
 
-      if (newTexto.startsWith("REPORT:")) {
-        const pipeIndex = newTexto.indexOf("|");
-        newCount = parseInt(newTexto.substring(7, pipeIndex), 10) + 1;
-        newTexto = newTexto.substring(pipeIndex + 1);
-      } else if (newTexto.startsWith("HIDDEN:")) {
-        return; // Already hidden
+        if (newCount >= 3) {
+          newTexto = `HIDDEN:${parsed.content}`;
+        } else {
+          newTexto = `REPORT:${newCount}|${parsed.content}`;
+        }
+
+        await supabase
+          .from("mensajes")
+          .update({ texto: newTexto })
+          .eq("id", id);
       }
-
-      if (newCount >= 3) {
-        newTexto = `HIDDEN:${newTexto}`;
-      } else {
-        newTexto = `REPORT:${newCount}|${newTexto}`;
-      }
-
-      await supabase.from("mensajes").update({ texto: newTexto }).eq("id", item.id);
+    } catch (err) {
+      console.error("Error reporting message:", err);
     }
   };
 
   const handleCapture = async (dataUrl: string) => {
     setShowCamera(false);
-
-    if (!checkContentSafety(dataUrl)) {
-      alert("La imagen no cumple con los requisitos de seguridad.");
-      return;
-    }
-
+    
     try {
-      const compressed = await compressToLimit(dataUrl, 60000);
+      const compressed = await compressToLimit(dataUrl, 50000); // Base64 limit around 50kb
+      const isSafe = await checkContentSafety(compressed);
+      
+      if (!isSafe) {
+        toast.error("Contenido no permitido", {
+          description: "La imagen parece contener material no apto o uniforme.",
+        });
+        return;
+      }
 
-      const { error } = await supabase.from("mensajes").insert({
-        evento_id: eventId,
-        zona_recinto: zone,
-        usuario_id: user?.id ?? "anon",
-        usuario_nombre: displayName ?? "raver",
-        texto: compressed,
-        hot: false,
-      });
-
-      if (error) console.error("Error saving message:", error);
+      if (isDemo) {
+        const id = crypto.randomUUID();
+        setItems((xs) => [
+          {
+            id,
+            author: "@tú",
+            peerId: "peer:local",
+            gradient: `url(${compressed})`,
+            caption: "Captura en vivo",
+            likes: 0,
+            liked: false,
+            reported: false,
+            isHidden: false,
+            ago: "ahora",
+          },
+          ...xs,
+        ]);
+      } else {
+        const { error } = await supabase.from("mensajes").insert({
+          evento_id: eventId,
+          zona_recinto: zone,
+          usuario_id: usuarioId,
+          usuario_nombre: usuarioNombre,
+          texto: `PHOTO:${compressed}`,
+          hot: false,
+        });
+        if (error) throw error;
+      }
     } catch (err) {
-      console.error("Error processing image:", err);
+      console.error("Capture error:", err);
+      toast.error("Error al subir captura");
     }
   };
 
@@ -280,87 +292,61 @@ export function FeedView({ zone, eventId }: Props) {
       )}
 
       <div className="flex flex-col gap-4 px-4">
-        {items.map((it) => {
-          const isImage = it.caption.startsWith("data:image/");
-          return (
-            <article
-              key={it.id}
-              className="overflow-hidden rounded-3xl border border-border bg-surface animate-slide-up"
+        {items.map((it) => (
+          <article
+            key={it.id}
+            className="overflow-hidden rounded-3xl border border-border bg-surface animate-slide-up"
+          >
+            <div 
+              className="relative aspect-[4/5] bg-cover bg-center transition-all duration-500" 
+              style={{ 
+                backgroundImage: it.isHidden ? "none" : it.gradient,
+                backgroundColor: it.isHidden ? "#222" : "transparent"
+              }}
             >
-              <div className="relative aspect-[9/16]" style={{ background: it.gradient }}>
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
-                <div className="absolute left-3 top-3 flex items-center gap-2 rounded-full bg-black/50 px-2 py-1 text-[10px] backdrop-blur z-10">
-                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--neon-2)] animate-pulse-dot" />
-                  {it.peerId}
+              {it.isHidden ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">
+                  <AlertTriangle className="h-10 w-10 text-muted-foreground mb-2" />
+                  <p className="text-sm font-medium text-muted-foreground">Contenido oculto</p>
+                  <p className="text-[10px] text-muted-foreground/60 mt-1">Este mensaje ha sido reportado por la comunidad.</p>
                 </div>
-
-                <div className="h-full w-full">
-                  {it.hidden ? (
-                    <div className="flex h-full w-full flex-col items-center justify-center bg-gray-800 text-center p-6">
-                      <Flag className="h-12 w-12 text-gray-500 mb-4" />
-                      <p className="text-sm font-bold text-gray-400">
-                        ⚠️ Contenido oculto por reportes de la comunidad
-                      </p>
-                    </div>
-                  ) : isImage ? (
-                    <img
-                      src={it.caption}
-                      className="h-full w-full object-cover"
-                      alt="Pulse"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center p-6 text-center">
-                      <p className="text-lg font-medium">{it.caption}</p>
-                    </div>
-                  )}
-                </div>
-
-                <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-3 z-10">
-                  <div>
-                    <p className="text-sm font-semibold">
-                      {it.author} · <span className="text-white/60 text-xs">{it.ago}</span>
-                    </p>
-                    {!isImage && !it.hidden && <p className="text-sm text-white/90">{it.caption}</p>}
+              ) : (
+                <>
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
+                  <div className="absolute left-3 top-3 flex items-center gap-2 rounded-full bg-black/50 px-2 py-1 text-[10px] backdrop-blur">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--neon-2)] animate-pulse-dot" />
+                    {it.peerId}
                   </div>
-                  <div className="flex flex-col gap-2">
-                    <button
-                      onClick={() => toggleLike(it.id)}
-                      className={`grid h-11 w-11 place-items-center rounded-full glass ${
-                        it.liked ? "neon-border" : ""
-                      }`}
-                    >
-                      <Flame
-                        className={`h-5 w-5 ${it.liked ? "text-[var(--neon)]" : "text-white"}`}
-                      />
-                    </button>
-                    <button
-                      disabled={it.reported || it.hidden}
-                      onClick={() => report(it)}
-                      className="grid h-11 w-11 place-items-center rounded-full glass disabled:opacity-50"
-                    >
-                      <Flag
-                        className={`h-4 w-4 ${
-                          it.reported ? "text-[var(--danger)]" : "text-white"
-                        }`}
-                      />
-                    </button>
+                  <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold">{it.author} · <span className="text-white/60 text-xs">{it.ago}</span></p>
+                      <p className="text-sm text-white/90">{it.caption.startsWith("PHOTO:") ? "Captura compartida" : it.caption}</p>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={() => toggleLike(it.id)}
+                        className={`grid h-11 w-11 place-items-center rounded-full glass ${it.liked ? "neon-border" : ""}`}
+                      >
+                        <Flame className={`h-5 w-5 ${it.liked ? "text-[var(--neon)]" : "text-white"}`} />
+                      </button>
+                      <button
+                        disabled={it.reported}
+                        onClick={() => report(it.id)}
+                        className="grid h-11 w-11 place-items-center rounded-full glass disabled:opacity-50"
+                      >
+                        <Flag className={`h-4 w-4 ${it.reported ? "text-[var(--danger)]" : "text-white"}`} />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </div>
-              <div className="flex items-center justify-between px-4 py-2 text-xs text-muted-foreground">
-                <span>🔥 {it.likes}</span>
-                <span>
-                  {it.hidden
-                    ? "Contenido oculto"
-                    : it.reported
-                    ? "Reportado · revisión comunitaria"
-                    : "Expira pronto"}
-                </span>
-              </div>
-            </article>
-          );
-        })}
+                </>
+              )}
+            </div>
+            <div className="flex items-center justify-between px-4 py-2 text-xs text-muted-foreground">
+              <span>🔥 {it.likes}</span>
+              <span>{it.isHidden ? "Bloqueado" : it.reported ? "Reportado · revisión comunitaria" : "Expira en 2h"}</span>
+            </div>
+          </article>
+        ))}
       </div>
 
       <button
@@ -372,7 +358,10 @@ export function FeedView({ zone, eventId }: Props) {
       </button>
 
       {showCamera && (
-        <CameraOverlay onCapture={handleCapture} onClose={() => setShowCamera(false)} />
+        <CameraOverlay
+          onCapture={handleCapture}
+          onClose={() => setShowCamera(false)}
+        />
       )}
     </div>
   );
