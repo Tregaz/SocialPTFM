@@ -1,9 +1,7 @@
-import { useEffect, useState } from "react";
-import { Camera, Flag, Flame, Wifi, Loader2 } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
+import { Camera, Flag, Flame, Wifi, AlertTriangle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { CameraOverlay } from "./CameraOverlay";
-import { toast } from "sonner";
-import { compressToLimit } from "@/utils/image";
 
 interface FeedItem {
   id: string;
@@ -15,6 +13,9 @@ interface FeedItem {
   liked: boolean;
   reported: boolean;
   ago: string;
+  isPhoto: boolean;
+  reportCount: number;
+  hidden: boolean;
 }
 
 const GRADIENTS = [
@@ -44,34 +45,52 @@ function dbRowToItem(row: {
   id: string;
   usuario_nombre?: string | null;
   peer_id?: string | null;
+  zona_recinto?: string | null;
   texto?: string | null;
   created_at?: string | null;
   hot?: boolean | null;
 }): FeedItem {
+  let texto = row.texto ?? "";
+  let hidden = texto.startsWith("HIDDEN:");
+  if (hidden) texto = texto.replace("HIDDEN:", "");
+
+  let reportCount = 0;
+  const reportMatch = texto.match(/^REPORT:(\d+)\|/);
+  if (reportMatch) {
+    reportCount = parseInt(reportMatch[1], 10);
+    texto = texto.replace(/^REPORT:\d+\|/, "");
+  }
+
+  const isPhoto = texto.startsWith("PHOTO:");
+  if (isPhoto) texto = texto.replace("PHOTO:", "");
+
   return {
     id: row.id,
     author: row.usuario_nombre ? `@${row.usuario_nombre}` : "@anon",
-    peerId: row.peer_id ?? "peer:db",
+    peerId: row.peer_id ?? row.zona_recinto ?? "peer:db",
     gradient: gradientFor(row.id),
-    caption: row.texto ?? "",
+    caption: texto,
     likes: 0,
     liked: false,
     reported: false,
     ago: row.created_at ? timeAgo(row.created_at) : "ahora",
+    isPhoto,
+    reportCount,
+    hidden: hidden || reportCount >= 3,
   };
 }
 
 interface Props {
   zone: string;
   eventId: string;
-  nsfwModel: any;
+  nsfwModel?: any;
 }
 
 export function FeedView({ zone, eventId, nsfwModel }: Props) {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showCamera, setShowCamera] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
   const isDemo = !eventId || eventId.startsWith("demo-");
 
   useEffect(() => {
@@ -128,17 +147,14 @@ export function FeedView({ zone, eventId, nsfwModel }: Props) {
         (msg: { payload: { id: string; author: string; zone: string; text: string; hot: boolean; ts: string } }) => {
           const p = msg.payload;
           setItems((prev) => [
-            {
+            dbRowToItem({
               id: p.id,
-              author: `@${p.author}`,
-              peerId: `sim:${p.zone}`,
-              gradient: gradientFor(p.id),
-              caption: p.text,
-              likes: 0,
-              liked: false,
-              reported: false,
-              ago: "ahora",
-            },
+              usuario_nombre: p.author,
+              zona_recinto: p.zone,
+              texto: p.text,
+              hot: p.hot,
+              created_at: p.ts,
+            }),
             ...prev,
           ]);
         },
@@ -159,61 +175,101 @@ export function FeedView({ zone, eventId, nsfwModel }: Props) {
       ),
     );
 
-  const report = (id: string) =>
+  const report = async (id: string) => {
     setItems((xs) => xs.map((x) => (x.id === id ? { ...x, reported: true } : x)));
 
-  const handleCapture = async (dataUrl: string) => {
-    setIsCameraOpen(false);
-    setIsVerifying(true);
+    const { data: msg } = await supabase
+      .from("mensajes")
+      .select("texto")
+      .eq("id", id)
+      .single();
 
-    try {
-      if (nsfwModel) {
-        const img = new Image();
-        img.src = dataUrl;
-        await new Promise((resolve) => (img.onload = resolve));
-
-        const predictions = await nsfwModel.classify(img);
-        const porn = predictions.find((p: any) => p.className === "Porn")?.probability || 0;
-        const hentai = predictions.find((p: any) => p.className === "Hentai")?.probability || 0;
-
-        if (porn > 0.6 || hentai > 0.6) {
-          toast.error("Contenido no permitido", {
-            description: "La imagen ha sido bloqueada por nuestro sistema de seguridad.",
-          });
-          return;
+    if (msg) {
+      let texto = msg.texto || "";
+      let reportCount = 0;
+      const reportMatch = texto.match(/REPORT:(\d+)\|/);
+      
+      if (reportMatch) {
+        reportCount = parseInt(reportMatch[1], 10) + 1;
+        texto = texto.replace(/REPORT:\d+\|/, `REPORT:${reportCount}|`);
+      } else {
+        reportCount = 1;
+        if (texto.startsWith("HIDDEN:")) {
+          texto = texto.replace("HIDDEN:", `HIDDEN:REPORT:${reportCount}|`);
+        } else {
+          texto = `REPORT:${reportCount}|${texto}`;
         }
       }
 
-      // Proceder con la compresión y el "envío" (local en este caso para el feed)
-      const compressed = await compressToLimit(dataUrl, 30000); // ~30KB limit
-      
-      const id = crypto.randomUUID();
-      const colors = ["#ff2d87", "#00d27a", "#7a00ff", "#ff7a00"];
-      const a = colors[Math.floor(Math.random() * colors.length)];
-      const b = colors[Math.floor(Math.random() * colors.length)];
-      
-      setItems((xs) => [
-        {
-          id,
-          author: "@tú",
-          peerId: "peer:local",
-          gradient: `linear-gradient(135deg, ${a}, ${b})`,
-          caption: "Captura en vivo",
-          likes: 0,
-          liked: false,
-          reported: false,
-          ago: "ahora",
-        },
-        ...xs,
-      ]);
+      if (reportCount >= 3 && !texto.startsWith("HIDDEN:")) {
+        texto = `HIDDEN:${texto}`;
+      }
 
-      toast.success("Captura compartida con éxito");
-    } catch (err) {
-      console.error("Error al procesar captura:", err);
-      toast.error("Error al procesar la imagen");
-    } finally {
-      setIsVerifying(false);
+      await supabase
+        .from("mensajes")
+        .update({ texto })
+        .eq("id", id);
     }
+  };
+
+  const handleCapture = async (dataUrl: string) => {
+    setShowCamera(false);
+    
+    if (nsfwModel) {
+      setIsVerifying(true);
+      try {
+        const img = new Image();
+        img.src = dataUrl;
+        await new Promise((resolve) => (img.onload = resolve));
+        
+        const predictions = await nsfwModel.classify(img);
+        const porn = predictions.find((p: any) => p.className === "Porn" || p.className === "Hentai");
+        
+        if (porn && porn.probability > 0.60) {
+          alert("Contenido inapropiado detectado. La imagen no será publicada.");
+          setIsVerifying(false);
+          return;
+        }
+      } catch (err) {
+        console.error("NSFW classification failed:", err);
+      } finally {
+        setIsVerifying(false);
+      }
+    }
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const texto = `PHOTO:${dataUrl}`;
+    const { error } = await supabase
+      .from("mensajes")
+      .insert({
+        evento_id: eventId,
+        zona_recinto: zone,
+        usuario_id: user.id,
+        usuario_nombre: user.user_metadata.display_name || "anon",
+        texto: texto,
+        hot: false,
+      });
+
+    if (error) {
+      console.error("Error uploading photo:", error.message);
+    } else {
+      localStorage.setItem("last_photo_ts", Date.now().toString());
+    }
+  };
+
+  const onCaptureClick = () => {
+    const lastTs = localStorage.getItem("last_photo_ts");
+    if (lastTs) {
+      const diff = Date.now() - parseInt(lastTs, 10);
+      if (diff < 5 * 60 * 1000) {
+        const mins = Math.ceil((5 * 60 * 1000 - diff) / 60000);
+        alert(`Espera ${mins} min para otra foto (cooldown comunitario).`);
+        return;
+      }
+    }
+    setShowCamera(true);
   };
 
   return (
@@ -223,16 +279,8 @@ export function FeedView({ zone, eventId, nsfwModel }: Props) {
           <p className="text-xs uppercase tracking-widest text-muted-foreground">Feed efímero · {zone}</p>
           <h2 className="text-xl font-bold">P2P en vivo</h2>
         </div>
-        <div className="flex items-center gap-2">
-          {isVerifying && (
-            <div className="flex items-center gap-1.5 rounded-full bg-[var(--neon)]/10 px-3 py-1 text-[10px] font-bold text-[var(--neon)] shadow-[0_0_10px_rgba(0,210,122,0.2)] animate-pulse">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Verificando seguridad…
-            </div>
-          )}
-          <div className="flex items-center gap-1 rounded-full neon-chip px-3 py-1 text-[10px] font-semibold">
-            <Wifi className="h-3 w-3" /> WebRTC
-          </div>
+        <div className="flex items-center gap-1 rounded-full neon-chip px-3 py-1 text-[10px] font-semibold">
+          <Wifi className="h-3 w-3" /> WebRTC
         </div>
       </div>
 
@@ -254,34 +302,57 @@ export function FeedView({ zone, eventId, nsfwModel }: Props) {
             key={it.id}
             className="overflow-hidden rounded-3xl border border-border bg-surface animate-slide-up"
           >
-            <div className="relative aspect-[4/5]" style={{ background: it.gradient }}>
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
-              <div className="absolute left-3 top-3 flex items-center gap-2 rounded-full bg-black/50 px-2 py-1 text-[10px] backdrop-blur">
-                <span className="h-1.5 w-1.5 rounded-full bg-[var(--neon-2)] animate-pulse-dot" />
-                {it.peerId}
+            {it.hidden ? (
+              <div className="flex flex-col items-center justify-center gap-2 bg-slate-900/50 py-12 px-6 text-center">
+                <AlertTriangle className="h-8 w-8 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground font-medium">
+                  ⚠️ Contenido oculto por reportes de la comunidad
+                </p>
               </div>
-              <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold">{it.author} · <span className="text-white/60 text-xs">{it.ago}</span></p>
-                  <p className="text-sm text-white/90">{it.caption}</p>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <button
-                    onClick={() => toggleLike(it.id)}
-                    className={`grid h-11 w-11 place-items-center rounded-full glass ${it.liked ? "neon-border" : ""}`}
-                  >
-                    <Flame className={`h-5 w-5 ${it.liked ? "text-[var(--neon)]" : "text-white"}`} />
-                  </button>
-                  <button
-                    disabled={it.reported}
-                    onClick={() => report(it.id)}
-                    className="grid h-11 w-11 place-items-center rounded-full glass disabled:opacity-50"
-                  >
-                    <Flag className={`h-4 w-4 ${it.reported ? "text-[var(--danger)]" : "text-white"}`} />
-                  </button>
+            ) : (
+              <div className={it.isPhoto ? "p-3" : "relative aspect-[4/5]"} style={!it.isPhoto ? { background: it.gradient } : {}}>
+                {it.isPhoto ? (
+                  <img
+                    src={it.caption}
+                    alt="Captured content"
+                    className="max-h-60 object-cover w-full rounded-lg border border-slate-800 bg-slate-950 mb-3"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = "https://via.placeholder.com/400x300?text=Error+al+cargar+imagen";
+                    }}
+                  />
+                ) : (
+                  <>
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
+                    <div className="absolute left-3 top-3 flex items-center gap-2 rounded-full bg-black/50 px-2 py-1 text-[10px] backdrop-blur">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[var(--neon-2)] animate-pulse-dot" />
+                      {it.peerId}
+                    </div>
+                  </>
+                )}
+                
+                <div className={it.isPhoto ? "flex items-end justify-between gap-3" : "absolute bottom-3 left-3 right-3 flex items-end justify-between gap-3"}>
+                  <div>
+                    <p className="text-sm font-semibold">{it.author} · <span className="text-white/60 text-xs">{it.ago}</span></p>
+                    <p className="text-sm text-white/90">{it.isPhoto ? "Captura en vivo" : it.caption}</p>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={() => toggleLike(it.id)}
+                      className={`grid h-11 w-11 place-items-center rounded-full glass ${it.liked ? "neon-border" : ""}`}
+                    >
+                      <Flame className={`h-5 w-5 ${it.liked ? "text-[var(--neon)]" : "text-white"}`} />
+                    </button>
+                    <button
+                      disabled={it.reported}
+                      onClick={() => report(it.id)}
+                      className="grid h-11 w-11 place-items-center rounded-full glass disabled:opacity-50"
+                    >
+                      <Flag className={`h-4 w-4 ${it.reported ? "text-[var(--danger)]" : "text-white"}`} />
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
             <div className="flex items-center justify-between px-4 py-2 text-xs text-muted-foreground">
               <span>🔥 {it.likes}</span>
               <span>{it.reported ? "Reportado · revisión comunitaria" : "Expira en 2h"}</span>
@@ -290,21 +361,30 @@ export function FeedView({ zone, eventId, nsfwModel }: Props) {
         ))}
       </div>
 
+      {isVerifying && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3 rounded-2xl bg-surface p-6 shadow-glow">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--neon)] border-t-transparent" />
+            <p className="text-sm font-medium">Verificando seguridad del reporte...</p>
+          </div>
+        </div>
+      )}
+
+      {showCamera && (
+        <CameraOverlay
+          onCapture={handleCapture}
+          onClose={() => setShowCamera(false)}
+        />
+      )}
+
       <button
-        onClick={() => setIsCameraOpen(true)}
+        onClick={onCaptureClick}
         disabled={isVerifying}
         className="fixed bottom-24 left-1/2 z-30 grid h-16 w-16 -translate-x-1/2 place-items-center rounded-full bg-[var(--neon)] shadow-glow active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed"
         aria-label="Capturar foto"
       >
         <Camera className="h-7 w-7 text-background" />
       </button>
-
-      {isCameraOpen && (
-        <CameraOverlay
-          onCapture={handleCapture}
-          onClose={() => setIsCameraOpen(false)}
-        />
-      )}
     </div>
   );
 }

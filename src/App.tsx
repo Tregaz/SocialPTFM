@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, LogOut, MapPin } from "lucide-react";
+
+declare global {
+  interface Window {
+    nsfwjs: any;
+  }
+}
 import { startBotSimulator } from "@/utils/botSimulator";
+import { startIntelligentBots } from "@/utils/intelligentBots";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BottomNav, type Tab } from "@/components/pulse/BottomNav";
 import { RadarView, type PulseEvent } from "@/components/pulse/RadarView";
@@ -22,21 +29,26 @@ function PulseApp() {
   const [modoBanner, setModoBanner] = useState<string | null>(null);
   const [simActive, setSimActive] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
-  const autoActivatedId = useRef<string | null>(null);
-  const logoTapCount = useRef(0);
-  const logoTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const { nearbyEvents, activeEvent, status: geoStatus, position } = useGeofence();
   const [nsfwModel, setNsfwModel] = useState<any>(null);
+  const autoActivatedId = useRef<string | null>(null);
 
   useEffect(() => {
     if (window.nsfwjs) {
-      window.nsfwjs.load().then((model) => {
-        console.log("[NSFW] Model loaded");
+      window.nsfwjs.load().then((model: any) => {
+        console.log("[NSFWJS] Model loaded");
         setNsfwModel(model);
       });
     }
   }, []);
+  const logoTapCount = useRef(0);
+  const logoTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const stop = startIntelligentBots();
+    return stop;
+  }, []);
+
+  const { nearbyEvents, activeEvent, status: geoStatus, position } = useGeofence();
 
   // ── Auto-activate Modo Evento when GPS puts user inside an event radius ───
   useEffect(() => {
@@ -204,9 +216,9 @@ function PulseApp() {
           />
         )}
         {tab === "feed" && selection && (
-          <FeedView
-            zone={selection.zone}
-            eventId={selection.event.id}
+          <FeedView 
+            zone={selection.zone} 
+            eventId={selection.event.id} 
             nsfwModel={nsfwModel}
           />
         )}
