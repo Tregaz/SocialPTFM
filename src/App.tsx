@@ -1,13 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, LogOut, MapPin } from "lucide-react";
-
-declare global {
-  interface Window {
-    nsfwjs: any;
-  }
-}
+import { Bot, LogOut, MapPin, QrCode, X } from "lucide-react";
 import { startBotSimulator } from "@/utils/botSimulator";
-import { startIntelligentBots } from "@/utils/intelligentBots";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BottomNav, type Tab } from "@/components/pulse/BottomNav";
 import { RadarView, type PulseEvent } from "@/components/pulse/RadarView";
@@ -16,6 +9,7 @@ import { ChatView } from "@/components/pulse/ChatView";
 import { AdminView } from "@/components/pulse/AdminView";
 import { HotAlert } from "@/components/pulse/HotAlert";
 import { LoginGate } from "@/components/pulse/LoginGate";
+import { ShareQR } from "@/components/pulse/ShareQR";
 import { useAuth } from "@/hooks/useAuth";
 import { useGeofence } from "@/hooks/useGeofence";
 import { supabase } from "@/integrations/supabase/client";
@@ -29,24 +23,10 @@ function PulseApp() {
   const [modoBanner, setModoBanner] = useState<string | null>(null);
   const [simActive, setSimActive] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [nsfwModel, setNsfwModel] = useState<any>(null);
+  const [showQR, setShowQR] = useState(false);
   const autoActivatedId = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (window.nsfwjs) {
-      window.nsfwjs.load().then((model: any) => {
-        console.log("[NSFWJS] Model loaded");
-        setNsfwModel(model);
-      });
-    }
-  }, []);
   const logoTapCount = useRef(0);
   const logoTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    const stop = startIntelligentBots();
-    return stop;
-  }, []);
 
   const { nearbyEvents, activeEvent, status: geoStatus, position } = useGeofence();
 
@@ -65,6 +45,47 @@ function PulseApp() {
     const t = setTimeout(() => setModoBanner(null), 4000);
     return () => clearTimeout(t);
   }, [activeEvent, selection]);
+
+  // ── Auto-pairing from URL params (QR scan) ────────────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlEventId = params.get("eventId");
+    const urlZona = params.get("zona");
+    if (!urlEventId || !urlZona) return;
+
+    (async () => {
+      const { data, error } = await supabase
+        .from("eventos")
+        .select("id, nombre, venue, tema, latitud, longitud, radio_metros, zonas")
+        .eq("id", urlEventId)
+        .single();
+
+      if (error || !data) {
+        console.error("[App] Auto-pairing failed:", error?.message);
+        return;
+      }
+
+      const event: PulseEvent = {
+        id: data.id,
+        name: data.nombre,
+        venue: data.venue ?? "",
+        theme: data.tema === "sport" ? "sport" : "festival",
+        liveUsers: 0,
+        zones: data.zonas?.length ? data.zonas : ["Pista", "VIP"],
+        cover:
+          data.tema === "sport"
+            ? "linear-gradient(135deg, oklch(0.55 0.22 145), oklch(0.4 0.18 200))"
+            : "linear-gradient(135deg, oklch(0.55 0.28 350), oklch(0.45 0.25 300))",
+        lat: data.latitud,
+        lng: data.longitud,
+        radio: data.radio_metros,
+      };
+
+      handleSelect(event, urlZona);
+      // Clean URL params to prevent re-triggering on refresh
+      window.history.replaceState({}, "", window.location.pathname);
+    })();
+  }, []);
 
   const handleSelect = (event: PulseEvent, zone: string) => {
     setSelection({ event, zone });
@@ -117,6 +138,27 @@ function PulseApp() {
     >
       {/* Global HOT alert interrupt — listens to all users */}
       <HotAlert eventId={selection?.event.id ?? null} />
+
+      {/* QR Share Modal */}
+      {showQR && selection && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+          <div className="relative w-full max-w-sm animate-slide-up rounded-3xl border border-border bg-surface p-6 shadow-2xl">
+            <button
+              onClick={() => setShowQR(false)}
+              className="absolute right-4 top-4 grid h-8 w-8 place-items-center rounded-full bg-surface-2 text-muted-foreground hover:text-foreground transition"
+              aria-label="Cerrar"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <ShareQR
+              userId={usuarioId}
+              eventId={selection.event.id}
+              zona={selection.zone}
+              displayName={usuarioNombre}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Auto-detection banner */}
       {modoBanner && (
@@ -180,6 +222,15 @@ function PulseApp() {
                 {selection.zone}
               </span>
             )}
+            {selection && (
+              <button
+                onClick={() => setShowQR(true)}
+                className="grid h-8 w-8 place-items-center rounded-full bg-surface-2 text-muted-foreground hover:text-foreground transition"
+                aria-label="Compartir QR"
+              >
+                <QrCode className="h-4 w-4" />
+              </button>
+            )}
             <button
               onClick={() => setSimActive((v) => !v)}
               title={simActive ? "Simulación ON — click para apagar" : "Simulación OFF — click para encender"}
@@ -216,11 +267,7 @@ function PulseApp() {
           />
         )}
         {tab === "feed" && selection && (
-          <FeedView 
-            zone={selection.zone} 
-            eventId={selection.event.id} 
-            nsfwModel={nsfwModel}
-          />
+          <FeedView zone={selection.zone} eventId={selection.event.id} usuarioId={usuarioId} usuarioNombre={usuarioNombre} />
         )}
         {tab === "chat" && selection && (
           <ChatView
