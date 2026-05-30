@@ -21,47 +21,33 @@ export function AdminView({ eventId, zone }: Props) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [lastSent, setLastSent] = useState<string | null>(null);
-  const alertChannelRef = useRef<RealtimeChannel | null>(null);
-  const radarChannelRef = useRef<RealtimeChannel | null>(null);
+  const channelRef = useRef<RealtimeChannel | null>(null);
   const isDemo = !eventId || eventId.startsWith("demo-");
 
   useEffect(() => {
     if (isDemo) return;
-    const alertCh = supabase.channel(`pulse-event-${eventId}-alert`);
-    const radarCh = supabase.channel(`pulse-event-${eventId}-radar`);
-    alertCh.subscribe();
-    radarCh.subscribe();
-    alertChannelRef.current = alertCh;
-    radarChannelRef.current = radarCh;
+    const ch = supabase.channel(`pulse-sim-${eventId}`);
+    ch.subscribe();
+    channelRef.current = ch;
     return () => {
-      supabase.removeChannel(alertCh);
-      supabase.removeChannel(radarCh);
-      alertChannelRef.current = null;
-      radarChannelRef.current = null;
+      supabase.removeChannel(ch);
+      channelRef.current = null;
     };
   }, [eventId, isDemo]);
 
   const emit = (message: string) => {
-    if (!message.trim() || sending || isDemo || !alertChannelRef.current || !radarChannelRef.current) return;
+    if (!message.trim() || sending || isDemo || !channelRef.current) return;
     setSending(true);
 
-    const payload = {
-      id: crypto.randomUUID(),
-      texto: message.trim(),
-      usuario_nombre: "SISTEMA / CONTROL",
-      zona_recinto: zone,
-    };
-
-    alertChannelRef.current.send({
+    channelRef.current.send({
       type: "broadcast",
       event: "hot_alert",
-      payload,
-    });
-
-    radarChannelRef.current.send({
-      type: "broadcast",
-      event: "hot_alert",
-      payload,
+      payload: {
+        id: crypto.randomUUID(),
+        texto: message.trim(),
+        usuario_nombre: "SISTEMA / CONTROL",
+        zona_recinto: zone,
+      },
     });
 
     setSending(false);

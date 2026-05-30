@@ -65,8 +65,6 @@ export function RadarView({
   const [activeEvent, setActiveEvent] = useState<PulseEvent | null>(selected?.event ?? null);
   const [zone, setZone] = useState<string | null>(selected?.zone ?? null);
   const [statusMsg, setStatusMsg] = useState("Escaneando frecuencia · GPS");
-  const [hotReports, setHotReports] = useState<Record<string, Set<string>>>({});
-  const [systemAlerts, setSystemAlerts] = useState<Record<string, boolean>>({});
 
   // If geofence provided events externally, use them directly
   useEffect(() => {
@@ -118,67 +116,6 @@ export function RadarView({
     })();
     return () => { cancelled = true; };
   }, [geofenceEvents, geoStatus, userLat, userLng]);
-
-  // ── Consensus Algorithm ───────────────────────────────────────────────────
-  useEffect(() => {
-    if (!activeEvent || activeEvent.id.startsWith("demo-")) return;
-
-    const eventId = activeEvent.id;
-    const radarChannel = supabase
-      .channel(`pulse-event-${eventId}-radar`)
-      .on(
-        "broadcast",
-        { event: "hot_alert" },
-        (payload: any) => {
-          const { zona_recinto, usuario_nombre } = payload.payload;
-          if (usuario_nombre === "SISTEMA / CONTROL" || usuario_nombre === "STAFF") {
-            setSystemAlerts((prev) => ({ ...prev, [zona_recinto]: true }));
-          }
-        },
-      )
-      .subscribe();
-
-    const msgChannel = supabase
-      .channel(`pulse-event-${eventId}-radar-msgs`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "mensajes",
-          filter: `evento_id=eq.${eventId}`,
-        },
-        (payload) => {
-          const m = payload.new as { zona_recinto: string; usuario_id: string; hot: boolean };
-          if (m.hot) {
-            setHotReports((prev) => {
-              const zoneSet = new Set(prev[m.zona_recinto] || []);
-              zoneSet.add(m.usuario_id);
-              return { ...prev, [m.zona_recinto]: zoneSet };
-            });
-          }
-        },
-      )
-      .subscribe();
-
-    // Clean up reports older than 5 mins
-    const interval = setInterval(() => {
-      setHotReports({});
-      setSystemAlerts({});
-    }, 5 * 60 * 1000);
-
-    return () => {
-      supabase.removeChannel(radarChannel);
-      supabase.removeChannel(msgChannel);
-      clearInterval(interval);
-    };
-  }, [activeEvent]);
-
-  const isRedZone = (z: string) => {
-    if (systemAlerts[z]) return true;
-    const uniqueUsers = hotReports[z]?.size || 0;
-    return uniqueUsers >= 3;
-  };
 
   const connect = async () => {
     if (!activeEvent || !zone) return;
@@ -338,24 +275,19 @@ export function RadarView({
                     Selecciona tu zona física
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    {e.zones.map((z) => {
-                      const red = isRedZone(z);
-                      return (
-                        <button
-                          key={z}
-                          onClick={(ev) => { ev.stopPropagation(); setZone(z); }}
-                          className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                            zone === z
-                              ? "neon-chip"
-                              : red
-                              ? "bg-[var(--danger)] text-white border border-[var(--danger)]"
-                              : "border border-border bg-surface-2 text-muted-foreground"
-                          }`}
-                        >
-                          {z} {red && "🔥"}
-                        </button>
-                      );
-                    })}
+                    {e.zones.map((z) => (
+                      <button
+                        key={z}
+                        onClick={(ev) => { ev.stopPropagation(); setZone(z); }}
+                        className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                          zone === z
+                            ? "neon-chip"
+                            : "border border-border bg-surface-2 text-muted-foreground"
+                        }`}
+                      >
+                        {z}
+                      </button>
+                    ))}
                   </div>
                   <button
                     disabled={!zone}
