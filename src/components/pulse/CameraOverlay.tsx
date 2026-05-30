@@ -196,7 +196,16 @@ export function CameraOverlay({ onCapture, onClose }: Props) {
               autoPlay
               playsInline
               muted
-              onLoadedMetadata={() => setIsReady(true)}
+              onLoadedMetadata={() => {
+                if (videoRef.current && videoRef.current.readyState >= 2) {
+                  setIsReady(true);
+                }
+              }}
+              onCanPlay={() => {
+                if (videoRef.current && videoRef.current.readyState >= 2) {
+                  setIsReady(true);
+                }
+              }}
               className={`h-full w-full object-cover transition-opacity duration-500 ${isReady ? "opacity-100" : "opacity-0"}`}
             />
             {!isReady && (
